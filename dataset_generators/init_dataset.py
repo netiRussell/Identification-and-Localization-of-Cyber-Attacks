@@ -24,116 +24,132 @@ Together, these loads determine the apparent power (S)
 # TODO: delete after debugging is fully complete.
 import sys
 
-
-# -- Create a network with 2848 busses --
-net = ppn.case2848rte()
-
-
-# -- Scale load and generation -- 
-for tbl in ["load", "sgen", "gen"]:
-    df = getattr(net, tbl)
-    if len(df) == 0:
-        continue
-    
-    # Generate an array of scale factors for all the elements
-    sf = np.random.uniform(0.8, 1.2, size=len(df))
-
-    # Scale active power
-    df["p_mw"] *= sf
-
-    # If reactive power column exists, scale it as well
-    if "q_mvar" in df.columns:
-        df["q_mvar"] *= sf
+def singleCycle():
+    # -- Create a network with 2848 busses --
+    net = ppn.case2848rte()
 
 
-# -- Run AC powerflow algorithm --
-pp.runpp(net)
+    # -- Scale load and generation -- 
+    for tbl in ["load", "sgen", "gen"]:
+        df = getattr(net, tbl)
+        if len(df) == 0:
+            continue
+        
+        # Generate an array of scale factors for all the elements
+        sf = np.random.uniform(0.8, 1.2, size=len(df))
+
+        # Scale active power
+        df["p_mw"] *= sf
+
+        # If reactive power column exists, scale it as well
+        if "q_mvar" in df.columns:
+            df["q_mvar"] *= sf
 
 
-# -- Add 1% Guassian noise --
-"""
-Uniform 1% option:
-noise = np.random.uniform(-0.01, 0.01, size=bus_meas.shape)
-
-p_from_mw - Real (active) power in megawatts (MW) flowing from the “from” bus of the line.
-q_from_mvar - Reactive power in megavolt-amperes reactive (MVAr) flowing from the “from” bus.
-p_to_mw - Real power in MW flowing into the “to” bus of the line.
-q_to_mvar - Reactive power in MVAr flowing into the “to” bus.
-"""
-
-measurements = net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]]
-noise = np.random.normal(loc=0.0, scale=0.01, size=measurements.shape)
-
-net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]] += measurements * noise
+    # -- Run AC powerflow algorithm --
+    pp.runpp(net)
 
 
-# -- Turn the net into a graph --
-# Generate the graph
-G = pptop.create_nxgraph(
-    net,
-    respect_switches=False,
-    include_impedances=True,
-    calc_branch_impedances=True,
-    branch_impedance_unit="ohm"
-)
+    # -- Add 1% Guassian noise --
+    """
+    Uniform 1% option:
+    noise = np.random.uniform(-0.01, 0.01, size=bus_meas.shape)
 
-# Add the needed attributed to each bus
-for b in G.nodes():
-    r = net.res_bus.loc[b]
-    G.nodes[b].update({
-        "p_mw":    r["p_mw"],
-        "q_mvar":  r["q_mvar"],
-        "vm_pu":   r["vm_pu"],
-        "va_degree": r["va_degree"]
-    })
+    p_from_mw - Real (active) power in megawatts (MW) flowing from the “from” bus of the line.
+    q_from_mvar - Reactive power in megavolt-amperes reactive (MVAr) flowing from the “from” bus.
+    p_to_mw - Real power in MW flowing into the “to” bus of the line.
+    q_to_mvar - Reactive power in MVAr flowing into the “to” bus.
+    """
 
-"""
-# -- Visualize -- 
-import matplotlib.pyplot as plt
-plt.figure(figsize=(12, 8))
-pos = nx.spring_layout(G, seed=42)
-nx.draw(G, pos, with_labels=True, node_size=2848, edge_color='gray')
-plt.title("Pandapower Network as Graph")
-plt.show()
-"""
+    measurements = net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]]
+    noise = np.random.normal(loc=0.0, scale=0.01, size=measurements.shape)
 
-# -- Turn the graph into matrices --
-# Extract the weighted adjacency matrix
-W_mat = nx.to_numpy_array(G, weight="z_ohm")
-
-# Extract the node values(P,Q,V,theta)
-attrs = ["p_mw", "q_mvar", "vm_pu", "va_degree"]
-X = np.array([
-    [G.nodes[n][key] for key in attrs]
-    for n in list(G.nodes())
-])
-
-# Creae a data subset for "attacked_flag"
-Attacked_mat = np.full(2848, False, dtype="bool")
+    net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]] += measurements * noise
 
 
-# -- Save the data subsets --
-"""
-# Convert array into dataframe and
-# save the dataframe as a csv file 
-DF = pd.DataFrame(W_mat) 
-DF.to_csv("../init_dataset/w_mat1.csv")
-DF = pd.DataFrame(X) 
-DF.to_csv("../init_dataset/X1.csv")
-"""
-# Impeadance is the same for both 
-# before and after the attack datasets
-# P.S. copying is redundant but is implemented for the convenience
-np.save("../init_dataset/w_mat1", W_mat)
-np.save("../Ad_dataset/w_mat1", W_mat)
-np.save("../As_dataset/w_mat1", W_mat)
+    # -- Turn the net into a graph --
+    # Generate the graph
+    G = pptop.create_nxgraph(
+        net,
+        respect_switches=False,
+        include_impedances=True,
+        calc_branch_impedances=True,
+        branch_impedance_unit="ohm"
+    )
 
-# To be attacked
-np.save("../init_dataset/x1", X)
-np.save("../init_dataset/attacked_flag1", Attacked_mat)
+    # Add the needed attributed to each bus
+    for b in G.nodes():
+        r = net.res_bus.loc[b]
+        G.nodes[b].update({
+            "p_mw":    r["p_mw"],
+            "q_mvar":  r["q_mvar"],
+            "vm_pu":   r["vm_pu"],
+            "va_degree": r["va_degree"]
+        })
+
+    """
+    # -- Visualize -- 
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(12, 8))
+    pos = nx.spring_layout(G, seed=42)
+    nx.draw(G, pos, with_labels=True, node_size=2848, edge_color='gray')
+    plt.title("Pandapower Network as Graph")
+    plt.show()
+    """
+
+    # -- Turn the graph into matrices --
+    # Extract the weighted adjacency matrix
+    W_mat = nx.to_numpy_array(G, weight="z_ohm")
+
+    # Extract the node values(P,Q,V,theta)
+    attrs = ["p_mw", "q_mvar", "vm_pu", "va_degree"]
+    X = np.array([
+        [G.nodes[n][key] for key in attrs]
+        for n in list(G.nodes())
+    ])
+
+    return W_mat, X
 
 
-# TODO: turn it into multiple cycles
+
+
+# # # # # # # # # # # #
+# ---- Main code ---- #
+# # # # # # # # # # # #
+
+for i in range(2848):
+    # -- Single cycle output --
+    print(f"Current cycle: #{i}")
+
+    # Get the network data
+    W_mat, X = singleCycle()
+
+    # Create a data subset for "attacked_flag"
+    Attacked_mat = np.full(2848, False, dtype="bool")
+
+
+    # -- Save the data subsets --
+    """
+    # Convert array into dataframe and
+    # save the dataframe as a csv file 
+    DF = pd.DataFrame(W_mat) 
+    DF.to_csv("../init_dataset/w_mat1.csv")
+    DF = pd.DataFrame(X) 
+    DF.to_csv("../init_dataset/X1.csv")
+    """
+    # Impeadance is the same for both 
+    # before and after the attack datasets
+    # P.S. copying is redundant but is implemented for the convenience
+    np.save(f"../init_dataset/w_mat{i}", W_mat)
+    np.save(f"../Ad_dataset/w_mat{i}", W_mat)
+    np.save(f"../As_dataset/w_mat{i}", W_mat)
+
+    # To be attacked
+    np.save(f"../init_dataset/x{i}", X)
+    np.save(f"../init_dataset/attacked_flag{i}", Attacked_mat)
+
+
+
 
 '''
 Questions:
