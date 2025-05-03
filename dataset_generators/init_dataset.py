@@ -117,7 +117,7 @@ def singleCycle():
 # ---- Main code ---- #
 # # # # # # # # # # # #
 
-for i in range(2848):
+for i in range(36000):
     # -- Single cycle output --
     print(f"Current cycle: #{i}")
 
@@ -156,4 +156,5 @@ Questions:
 1) Do I add noise to the correct columns?
 2) Do I scale the correct columns?
 3) Have I added all the needed attributes to the nodes?
+4) How to choose what nodes to attack? - Show the code
 '''
