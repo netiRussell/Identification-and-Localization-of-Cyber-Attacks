@@ -18,7 +18,6 @@ Reactive load - energy stored and released by inductors or capacitors
 Doesn't do useful work, but is essential for voltage stability.
 
 Together, these loads determine the apparent power (S)
-
 """
 
 # TODO: delete after debugging is fully complete.
@@ -26,11 +25,12 @@ import sys
 
 def singleCycle():
     # -- Create a network with 2848 busses --
+    # TODO: keep the same network layout but different values
     net = ppn.case2848rte()
 
-
+    # TODO: restructure to only use load
     # -- Scale load and generation -- 
-    for tbl in ["load", "sgen", "gen"]:
+    for tbl in ["load"]:
         df = getattr(net, tbl)
         if len(df) == 0:
             continue
@@ -61,6 +61,7 @@ def singleCycle():
     q_to_mvar - Reactive power in MVAr flowing into the “to” bus.
     """
 
+    # TODO: add the noise to voltage angle, voltage magnitude
     measurements = net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]]
     noise = np.random.normal(loc=0.0, scale=0.01, size=measurements.shape)
 
@@ -146,6 +147,7 @@ for i in range(36000):
 
     # To be attacked
     np.save(f"../init_dataset/x{i}", X)
+    # TODO: restructure the code to omit the creation of a separate file for Attacked_mat
     np.save(f"../init_dataset/attacked_flag{i}", Attacked_mat)
 
 
@@ -153,8 +155,6 @@ for i in range(36000):
 
 '''
 Questions:
-1) Do I add noise to the correct columns?
-2) Do I scale the correct columns?
-3) Have I added all the needed attributes to the nodes?
-4) How to choose what nodes to attack? - Show the code
+...
+
 '''

@@ -1,16 +1,16 @@
 import numpy as np
 
-def saveAttackedNetwork( X, Attacked_mat, i, attack_type):
+def saveNetwork( X, target, i, attack_type):
   """
-  Saves the attacked network into a Ad(or As)_dataset folder
+  Saves the network into a Ad(or As)_dataset folder
 
   Parameters:
   ----------
   X : NumPy array filled with float values
     Node features array
     
-  Attacked_mat: NumPy array filled with float values
-    Matrix of nodes' attacked status
+  target: a NumPy array filled with integers
+    Expected output of the model that is composed of the attack status and IDs of the attacked nodes
 
   i : Integer
     Current iteration (i from 0 to 36000)
@@ -24,7 +24,8 @@ def saveAttackedNetwork( X, Attacked_mat, i, attack_type):
     None
   """
   np.save(f"../A{attack_type}_dataset/x{i}", X)
-  np.save(f"../A{attack_type}_dataset/attacked_flag{i}", Attacked_mat)
+  np.save(f"../A{attack_type}_dataset/target{i}", target)
+
 
 
 def loadDataset( i ):
@@ -56,11 +57,11 @@ def loadDataset( i ):
   # Attacked_mat = matrix of nodes' attacked status
   Attacked_mat = np.load(f"../init_dataset/attacked_flag{i}.npy")
 
-  # With a 70% chance (30% chance the network won't experience any attack),
-  # create a boolean mask to randomly attack up to 50% of the nodes
+  # With a 40% chance (60% chance the network won't experience any attack),
+  # create a boolean mask to randomly attack up to 5% of the nodes
   percentage_tobe_attacked = 0
-  if(np.random.rand() < 0.7):
-    percentage_tobe_attacked = np.random.uniform(0, 0.5)
+  if(np.random.rand() <= 0.4):
+    percentage_tobe_attacked = np.random.uniform(0, 0.05)
 
   mask = np.random.rand(X[:, 0].shape[0]) < percentage_tobe_attacked # the use of X[:, any].shape would yeild the same result
 
@@ -71,5 +72,39 @@ def loadDataset( i ):
 
 
 
-# TODO: target generation function to be used in Ad and As .py files to specify the expected output of a particular dataset
-# def generateTarget( Attacked_mat ):
+def generateTarget( Attacked_mat ):
+  """
+  Generates a NumPy array of integers that represents the
+  expected output for the training of the model.
+  [0] = no attack happended
+  [1 , id1, id2, ...] = attack took place on the buses with the id1, id2, ... IDs
+
+  Parameters:
+  ----------
+  Attacked_mat: NumPy array filled with float values
+    Matrix of nodes' attacked status
+
+
+  Returns:
+  -------
+    target: a NumPy array filled with integers
+      Expected output of the model that is composed of the attack status and IDs of the attacked nodes
+
+  """
+  target = list()
+  
+  # -- Append IDs of the nodes that have been attacked --
+  for node_id, node_attackedFlag in enumerate(Attacked_mat):
+    if node_attackedFlag == True:
+      target.append(node_id)
+  
+  # -- Create the final output --
+  # If the list is empty => network was never attacked
+  if( len(target) == 0 ):
+    # expected output: healthy status of the network
+    return np.array([0])
+  else:
+    # expected output: unhealthy status of the network + ids of the attacked buses
+    target.insert(0, 1)
+    return target
+

@@ -2,13 +2,14 @@ import numpy as np
 import sys
 
 # Implemented functions
-from functions import saveAttackedNetwork, loadDataset
+from functions import saveNetwork, loadDataset, generateTarget
 
 # # # # # # # # # # # #
 # ---- Main code ---- #
 # # # # # # # # # # # #
 
 for i in range(36000):
+  print(f"Current cycle: #{i}")
   X, Attacked_mat, mask = loadDataset(i)
 
   # Extract the node features to be attacked
@@ -19,9 +20,11 @@ for i in range(36000):
   X[mask, 0] = np.random.normal(np.mean(P), np.std(P), size=mask.sum())
   X[mask, 1] = np.random.normal(np.mean(Q), np.std(Q), size=mask.sum())
 
-  # Save the modified files
-  saveAttackedNetwork(X, Attacked_mat, i, "d")
+  # Generate target (expected output)
+  target = generateTarget( Attacked_mat, i, "d" )
 
-  # TODO: implement and run the target generator function
+  # Save the modified files
+  saveNetwork(X, target, i, "d")
+
 
 
