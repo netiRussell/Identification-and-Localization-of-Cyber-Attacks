@@ -55,7 +55,7 @@ def loadDataset( i ):
   X = np.load(f"../init_dataset/x{i}.npy")
 
   # Attacked_mat = matrix of nodes' attacked status
-  Attacked_mat = np.load(f"../init_dataset/attacked_flag{i}.npy")
+  Attacked_mat = np.full(2848, False, dtype="bool")
 
   # With a 40% chance (60% chance the network won't experience any attack),
   # create a boolean mask to randomly attack up to 5% of the nodes

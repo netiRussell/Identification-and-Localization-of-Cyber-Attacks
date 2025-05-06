@@ -3,7 +3,7 @@ import pandapower.networks as ppn
 import pandapower.topology as pptop
 import networkx as nx
 import numpy as np
-import pandas as pd
+import copy
 
 """
 Each transmission line or branch connects two buses:
@@ -23,27 +23,19 @@ Together, these loads determine the apparent power (S)
 # TODO: delete after debugging is fully complete.
 import sys
 
-def singleCycle():
-    # -- Create a network with 2848 busses --
-    # TODO: keep the same network layout but different values
-    net = ppn.case2848rte()
+def singleCycle( net ):
+    
+    # -- Scale the load -- 
+    df = net["load"]
+    
+    # Generate an array of scale factors for all the elements
+    sf = np.random.uniform(0.8, 1.2, size=len(df))
 
-    # TODO: restructure to only use load
-    # -- Scale load and generation -- 
-    for tbl in ["load"]:
-        df = getattr(net, tbl)
-        if len(df) == 0:
-            continue
-        
-        # Generate an array of scale factors for all the elements
-        sf = np.random.uniform(0.8, 1.2, size=len(df))
+    # Scale active power
+    df["p_mw"] *= sf
 
-        # Scale active power
-        df["p_mw"] *= sf
-
-        # If reactive power column exists, scale it as well
-        if "q_mvar" in df.columns:
-            df["q_mvar"] *= sf
+    # Scale reactive power
+    df["q_mvar"] *= sf
 
 
     # -- Run AC powerflow algorithm --
@@ -61,11 +53,15 @@ def singleCycle():
     q_to_mvar - Reactive power in MVAr flowing into the “to” bus.
     """
 
-    # TODO: add the noise to voltage angle, voltage magnitude
-    measurements = net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]]
-    noise = np.random.normal(loc=0.0, scale=0.01, size=measurements.shape)
+    measurements_line = net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]]
+    measurements_bus = net.res_bus[["vm_pu", "va_degree"]]
+    noise_line = np.random.normal(loc=0.0, scale=0.01, size=measurements_line.shape)
+    noise_bus = np.random.normal(loc=0.0, scale=0.01, size=measurements_bus.shape)
 
-    net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]] += measurements * noise
+    net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]] += measurements_line * noise_line
+    net.res_bus[["vm_pu", "va_degree"]] += measurements_bus * noise_bus
+
+
 
 
     # -- Turn the net into a graph --
@@ -98,10 +94,6 @@ def singleCycle():
     plt.show()
     """
 
-    # -- Turn the graph into matrices --
-    # Extract the weighted adjacency matrix
-    W_mat = nx.to_numpy_array(G, weight="z_ohm")
-
     # Extract the node values(P,Q,V,theta)
     attrs = ["p_mw", "q_mvar", "vm_pu", "va_degree"]
     X = np.array([
@@ -118,38 +110,48 @@ def singleCycle():
 # ---- Main code ---- #
 # # # # # # # # # # # #
 
+# -- Create a network with 2848 busses -- 
+net = ppn.case2848rte()
+
+# -- Turn in into a graph --
+G = pptop.create_nxgraph(
+    net,
+    respect_switches=False,
+    include_impedances=True,
+    calc_branch_impedances=True,
+    branch_impedance_unit="ohm"
+)
+
+# -- Extract the weighted adjacency matrix -- 
+W_mat = nx.to_numpy_array(G, weight="z_ohm")
+
+# -- Save the layout as a weighted adjacency matrix --
+np.save(f"../init_dataset/w_mat", W_mat)
+np.save(f"../Ad_dataset/w_mat", W_mat)
+np.save(f"../As_dataset/w_mat", W_mat)
+
+# -- Run the AC algorithm with differently scaled loads 36000 times --
 for i in range(36000):
     # -- Single cycle output --
-    print(f"Current cycle: #{i}")
+    print(f"Current instance: #{i}")
 
-    # Get the network data
-    W_mat, X = singleCycle()
-
-    # Create a data subset for "attacked_flag"
-    Attacked_mat = np.full(2848, False, dtype="bool")
+    # Copy the initial network and
+    # get the network data
+    net_copy = copy.deepcopy(net)
+    W_mat, X = singleCycle( net_copy )
 
 
     # -- Save the data subsets --
     """
+    import pandas
     # Convert array into dataframe and
     # save the dataframe as a csv file 
-    DF = pd.DataFrame(W_mat) 
-    DF.to_csv("../init_dataset/w_mat1.csv")
     DF = pd.DataFrame(X) 
-    DF.to_csv("../init_dataset/X1.csv")
+    DF.to_csv(f"../init_dataset/X{i}.csv")
     """
-    # Impeadance is the same for both 
-    # before and after the attack datasets
-    # P.S. copying is redundant but is implemented for the convenience
-    np.save(f"../init_dataset/w_mat{i}", W_mat)
-    np.save(f"../Ad_dataset/w_mat{i}", W_mat)
-    np.save(f"../As_dataset/w_mat{i}", W_mat)
 
-    # To be attacked
+    # Save the feature nodes of the current instance
     np.save(f"../init_dataset/x{i}", X)
-    # TODO: restructure the code to omit the creation of a separate file for Attacked_mat
-    np.save(f"../init_dataset/attacked_flag{i}", Attacked_mat)
-
 
 
 
