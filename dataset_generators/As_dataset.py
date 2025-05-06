@@ -15,15 +15,15 @@ for i in range(36000):
   P = X[:, 0]
   Q = X[:, 1]
 
-  # Apply the distribution-based attack on the marked buses
-  X[mask, 0] = np.random.normal(np.mean(P), np.std(P), size=mask.sum())
-  X[mask, 1] = np.random.normal(np.mean(Q), np.std(Q), size=mask.sum())
+  # Apply the scale-based attack on the marked buses
+  X[mask, 0] = X[mask, 0] * np.random.uniform(0.9, 1.1, size=mask.sum())
+  X[mask, 1] = X[mask, 1] * np.random.uniform(0.9, 1.1, size=mask.sum())
 
   # Generate target (expected output)
-  target = generateTarget( Attacked_mat, i, "d" )
+  target = generateTarget( Attacked_mat, i, "s" )
 
   # Save the modified files
-  saveNetwork(X, target, i, "d")
+  saveNetwork(X, target, i, "s")
 
 
 
