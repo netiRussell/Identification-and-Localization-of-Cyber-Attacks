@@ -20,7 +20,7 @@ for i in range(36000):
   X[mask, 1] = np.random.normal(np.mean(Q), np.std(Q), size=mask.sum())
 
   # Generate target (expected output)
-  target = generateTarget( Attacked_mat, i, "d" )
+  target = generateTarget( Attacked_mat )
 
   # Save the modified files
   saveNetwork(X, target, i, "d")
