@@ -143,7 +143,7 @@ for i in range(36000):
 
     # -- Save the data subsets --
     """
-    import pandas
+    import pandas as pd
     # Convert array into dataframe and
     # save the dataframe as a csv file 
     DF = pd.DataFrame(X) 
