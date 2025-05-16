@@ -59,6 +59,7 @@ def loadDataset( i ):
 
   # With a 40% chance (60% chance the network won't experience any attack),
   # create a boolean mask to randomly attack up to 5% of the nodes
+  # TODO: implement an attack to a group of connected buses (randomly choose 5-15)
   percentage_tobe_attacked = 0
   if(np.random.rand() <= 0.4):
     percentage_tobe_attacked = np.random.uniform(0, 0.05)
