@@ -152,11 +152,3 @@ for i in range(36000):
 
     # Save the feature nodes of the current instance
     np.save(f"../init_dataset/x{i}", X)
-
-
-
-'''
-Questions:
-...
-
-'''

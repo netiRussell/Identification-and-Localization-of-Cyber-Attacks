@@ -3,13 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import ARMAConv
 
-class GNNArmaEncoder(nn.Module):
+class GNNArma(nn.Module):
     """
     GNN encoder using ARMA filters.
     """
     def __init__(self, in_channels, hidden_channels, out_channels, 
                  num_stacks=3, num_layers=2):
-        super(GNNArmaEncoder, self).__init__()
+        super(GNNArma, self).__init__()
         self.conv1 = ARMAConv(in_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
         self.bn1 = nn.BatchNorm1d(hidden_channels)
@@ -35,10 +35,10 @@ class GNNArmaTransformer(nn.Module):
     Combines the GNN ARMA encoder with a vanilla Transformer encoder
     and a classification head.
     """
-    def __init__(self, in_channels, hidden_channels, gnn_out_channels,
-                 transformer_heads=4, transformer_layers=2):
+    def __init__(self, in_channels, hidden_channels, gnn_out_channels, num_stacks=3, 
+                 num_layers=2, transformer_heads=4, transformer_layers=2):
         super(GNNArmaTransformer, self).__init__()
-        self.encoder = GNNArmaEncoder(in_channels, hidden_channels, gnn_out_channels)
+        self.encoder = GNNArma(in_channels, hidden_channels, gnn_out_channels, num_stacks, num_layers)
         
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=gnn_out_channels,

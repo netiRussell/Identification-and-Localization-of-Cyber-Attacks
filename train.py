@@ -2,6 +2,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
+from model.ARMA_Transformer import GNNArmaTransformer
+
+'''
+Questions:
+1) Is it okay to have more than 36k samples?
+2) Is it okay to have 1-15 buses attacked instead of 5-15?
+
+'''
 
 # --- 1) Prepare your data (PyG dataset) ---
 # Assume you have a PyG `InMemoryDataset` where each Data.y is a long tensor
@@ -20,6 +28,8 @@ model = GNNArmaTransformer(
     in_channels=dataset.num_node_features,
     hidden_channels=128,
     gnn_out_channels=256,
+    num_stacks=4, 
+    num_layers=8,
     transformer_heads=8,
     transformer_layers=4
 ).to(device)
