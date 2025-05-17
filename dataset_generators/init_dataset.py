@@ -123,7 +123,6 @@ G = pptop.create_nxgraph(
 )
 
 # -- Extract the weighted adjacency matrix -- 
-# TODO: convert into edge indices
 W_mat = nx.to_numpy_array(G, weight="z_ohm")
 
 # -- Collect direct neighbors of each node for the future use of BFS --
@@ -132,14 +131,26 @@ neighbors = [
         for i in range(W_mat.shape[0])
     ]
 
-# -- Save the graph structure as a weighted adjacency matrix --
-np.save("../init_dataset/w_mat", W_mat)
-np.save("../Ad_dataset/w_mat", W_mat)
-np.save("../As_dataset/w_mat", W_mat)
-
 # -- Save direct neighbors of each node --
 # (Saved as an object because of inconsistent neighbors[:, 1].shape)
 np.save("../init_dataset/neighbors", np.array(neighbors, dtype=object))
+
+# -- Extract edges and weights --
+edges = []
+weights = []
+
+for u, v, data in G.edges(data=True):
+    edges.append([u, v])
+    weights.append(data["z_ohm"])
+
+# -- Save the net structure as edge indices and correpsonding weights  --
+np.save("../init_dataset/edge_indices", edges)
+np.save("../Ad_dataset/edge_indices", edges)
+np.save("../As_dataset/edge_indices", edges)
+
+np.save("../init_dataset/weights", weights)
+np.save("../Ad_dataset/weights", weights)
+np.save("../As_dataset/weights", weights)
 
 # -- Run the AC algorithm with differently scaled loads 36000 times --
 for i in range(36000):

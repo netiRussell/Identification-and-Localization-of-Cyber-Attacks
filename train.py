@@ -8,8 +8,10 @@ from model.ARMA_Transformer import GNNArmaTransformer
 Questions:
 1) Is it okay to have more than 36k samples?
 2) Is it okay to have 1-15 buses attacked instead of 5-15?
+3) Do the weights(impedence) of the edges change after AC algorithm is run?
 
-To be used: W_max - adjacency matrix, X, 
+Input: edge_indices, weights, node features
+Output: 2848 boolean values where False means no attack on the bus and Trues means the bus has been attacked
 '''
 
 # --- 1) Prepare your data (PyG dataset) ---
