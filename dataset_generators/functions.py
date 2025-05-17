@@ -57,13 +57,10 @@ def loadDataset( i ):
   # X = Node features array
   X = np.load(f"../init_dataset/x{i}.npy")
 
-  # Attacked_mat = matrix of nodes' attacked status
-  Attacked_mat = np.full(2848, False, dtype="bool")
-
   # With a 40% chance (60% chance the network won't experience any attack),
   # create a boolean mask to randomly attack up to 15 connected buses
   num_buses_tobe_attacked = 0
-  mask = np.full(2848, False)
+  mask = np.full(2848, False, dtype="bool")
 
   if(np.random.rand() <= 0.4):
     # Randomly pick number of buses to be attacked (up to 15)
@@ -82,48 +79,7 @@ def loadDataset( i ):
     mask[buses_tobe_attacked] = True
 
 
-  # Set the attacked_flag
-  Attacked_mat[mask] = True
-
-  return X, Attacked_mat, mask
-
-
-
-def generateTarget( Attacked_mat ):
-  """
-  Generates a NumPy array of integers that represents the
-  expected output for the training of the model.
-  [0] = no attack happended
-  [1 , id1, id2, ...] = attack took place on the buses with the id1, id2, ... IDs
-
-  Parameters:
-  ----------
-  Attacked_mat: NumPy array filled with float values
-    Matrix of nodes' attacked status
-
-
-  Returns:
-  -------
-    target: a NumPy array filled with integers
-      Expected output of the model that is composed of the attack status and IDs of the attacked nodes
-
-  """
-  target = list()
-  
-  # -- Append IDs of the nodes that have been attacked --
-  for node_id, node_attackedFlag in enumerate(Attacked_mat):
-    if node_attackedFlag == True:
-      target.append(node_id)
-  
-  # -- Create the final output --
-  # If the list is empty => network was never attacked
-  if( len(target) == 0 ):
-    # expected output: healthy status of the network
-    return np.array([0])
-  else:
-    # expected output: unhealthy status of the network + ids of the attacked buses
-    target.insert(0, 1)
-    return target
+  return X, mask
 
 
 # # # # # # # # # # # # # # # #
@@ -131,6 +87,9 @@ def generateTarget( Attacked_mat ):
 # # # # # # # # # # # # # # # #
 from collections import deque
 
+"""
+Runs vanilla BFS algorithm
+"""
 def _bfs(root, k, neighbors):
   visited = {root}
   q = deque([root])

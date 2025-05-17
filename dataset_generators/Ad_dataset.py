@@ -9,7 +9,7 @@ from functions import saveNetwork, loadDataset, generateTarget
 
 for i in range(36000):
   print(f"Current cycle: #{i}")
-  X, Attacked_mat, mask = loadDataset(i)
+  X, mask = loadDataset(i)
 
   # Extract the node features to be attacked
   P = X[:, 0]
@@ -20,7 +20,7 @@ for i in range(36000):
   X[mask, 1] = np.random.normal(np.mean(Q), np.std(Q), size=mask.sum())
 
   # Generate target (expected output)
-  target = generateTarget( Attacked_mat )
+  target = mask.astype(int)
 
   # Save the modified files
   saveNetwork(X, target, i, "d")
