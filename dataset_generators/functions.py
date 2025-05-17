@@ -1,5 +1,8 @@
 import numpy as np
 
+# TODO: To be deleted
+import sys
+
 def saveNetwork( X, target, i, attack_type):
   """
   Saves the network into a Ad(or As)_dataset folder
@@ -58,13 +61,26 @@ def loadDataset( i ):
   Attacked_mat = np.full(2848, False, dtype="bool")
 
   # With a 40% chance (60% chance the network won't experience any attack),
-  # create a boolean mask to randomly attack up to 5% of the nodes
-  # TODO: implement an attack to a group of connected buses (randomly choose 5-15)
-  percentage_tobe_attacked = 0
-  if(np.random.rand() <= 0.4):
-    percentage_tobe_attacked = np.random.uniform(0, 0.05)
+  # create a boolean mask to randomly attack up to 15 connected buses
+  num_buses_tobe_attacked = 0
+  mask = np.full(2848, False)
 
-  mask = np.random.rand(X[:, 0].shape[0]) < percentage_tobe_attacked # the use of X[:, any].shape would yeild the same result
+  if(np.random.rand() <= 0.4):
+    # Randomly pick number of buses to be attacked (up to 15)
+    num_buses_tobe_attacked = np.random.randint(1, 16)
+
+    # Load direct neighbors of each node
+    neighbors = np.load("../init_dataset/neighbors.npy", allow_pickle = True).tolist()
+    
+    # Randomly pick the root bus around which the attack will take place
+    root = np.random.randint(0, 2848)
+
+    # Find buses connected to the root with bfs 
+    buses_tobe_attacked = _bfs(root, num_buses_tobe_attacked, neighbors)
+
+    # Fill mask with the output of bfs
+    mask[buses_tobe_attacked] = True
+
 
   # Set the attacked_flag
   Attacked_mat[mask] = True
@@ -109,3 +125,28 @@ def generateTarget( Attacked_mat ):
     target.insert(0, 1)
     return target
 
+
+# # # # # # # # # # # # # # # #
+# ---- Private functions ---- #
+# # # # # # # # # # # # # # # #
+from collections import deque
+
+def _bfs(root, k, neighbors):
+  visited = {root}
+  q = deque([root])
+  out = []
+
+  while q and len(out) < k:
+    u = q.popleft()
+
+    for v in neighbors[u]:
+      if v not in visited:
+        visited.add(v)
+        out.append(v)
+        q.append(v)
+
+        if len(out) >= k:
+            break
+        
+
+  return out

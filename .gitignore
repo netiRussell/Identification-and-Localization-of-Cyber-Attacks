@@ -2,4 +2,5 @@
 /init_dataset
 /Ad_dataset
 /As_dataset
+__pycache__/
 **/__pycache__/

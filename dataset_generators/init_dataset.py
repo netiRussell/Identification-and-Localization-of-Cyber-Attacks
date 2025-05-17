@@ -101,7 +101,7 @@ def singleCycle( net ):
         for n in list(G.nodes())
     ])
 
-    return W_mat, X
+    return X
 
 
 
@@ -123,12 +123,23 @@ G = pptop.create_nxgraph(
 )
 
 # -- Extract the weighted adjacency matrix -- 
+# TODO: convert into edge indices
 W_mat = nx.to_numpy_array(G, weight="z_ohm")
 
-# -- Save the layout as a weighted adjacency matrix --
-np.save(f"../init_dataset/w_mat", W_mat)
-np.save(f"../Ad_dataset/w_mat", W_mat)
-np.save(f"../As_dataset/w_mat", W_mat)
+# -- Collect direct neighbors of each node for the future use of BFS --
+neighbors = [
+        list(np.nonzero(W_mat[i] != 0)[0])
+        for i in range(W_mat.shape[0])
+    ]
+
+# -- Save the graph structure as a weighted adjacency matrix --
+np.save("../init_dataset/w_mat", W_mat)
+np.save("../Ad_dataset/w_mat", W_mat)
+np.save("../As_dataset/w_mat", W_mat)
+
+# -- Save direct neighbors of each node --
+# (Saved as an object because of inconsistent neighbors[:, 1].shape)
+np.save("../init_dataset/neighbors", np.array(neighbors, dtype=object))
 
 # -- Run the AC algorithm with differently scaled loads 36000 times --
 for i in range(36000):
@@ -138,7 +149,7 @@ for i in range(36000):
     # Copy the initial network and
     # get the network data
     net_copy = copy.deepcopy(net)
-    W_mat, X = singleCycle( net_copy )
+    X = singleCycle( net_copy )
 
 
     # -- Save the data subsets --

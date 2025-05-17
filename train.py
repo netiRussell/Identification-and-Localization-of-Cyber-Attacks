@@ -9,6 +9,7 @@ Questions:
 1) Is it okay to have more than 36k samples?
 2) Is it okay to have 1-15 buses attacked instead of 5-15?
 
+To be used: W_max - adjacency matrix, X, 
 '''
 
 # --- 1) Prepare your data (PyG dataset) ---
