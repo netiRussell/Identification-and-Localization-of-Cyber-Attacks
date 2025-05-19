@@ -30,6 +30,6 @@ class FDIADataset(torch.utils.data.Dataset):
                          dtype=torch.float)
         # 4) labels: your 0/1 per–node target array
         #    we assume here you have y_{idx}.npy of shape [2848]
-        y = torch.tensor(np.load(os.path.join(self.root, f"y_{idx}.npy")),
+        y = torch.tensor(np.load(os.path.join(self.root, f"target_{idx}.npy")),
                          dtype=torch.long)
         return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)

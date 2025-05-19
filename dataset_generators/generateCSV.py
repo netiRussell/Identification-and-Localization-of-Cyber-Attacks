@@ -3,8 +3,8 @@
 import pandas as pd
 import numpy as np
 
-outputName = "target_attacked"
-filePath = "../Ad_dataset/target4.npy"
+outputName = "weights"
+filePath = "../init_dataset/weights.npy"
 file = np.load(filePath)
 
 """
