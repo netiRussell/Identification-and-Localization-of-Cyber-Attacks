@@ -3,16 +3,60 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
 from model.ARMA_Transformer import GNNArmaTransformer
+from torch.utils.data import random_split
+from dataset import FDIADataset
 
 '''
 Questions:
 1) Is it okay to have more than 36k samples?
 2) Is it okay to have 1-15 buses attacked instead of 5-15?
-3) Do the weights(impedence) of the edges change after AC algorithm is run?
 
 Input: edge_indices, weights, node features
 Output: 2848 boolean values where False means no attack on the bus and Trues means the bus has been attacked
 '''
+
+
+config = {
+              "num_epochs": 6,
+              "lr": 1e-3, 
+              "weight_decay": 1e-5,
+              
+              "hidden_channels": 128,
+              "gnn_out_channels": 256,
+              "num_stacks": 4, 
+              "num_layers": 8,
+              "transformer_heads": 8,
+              "transformer_layers": 4
+          }
+
+
+
+
+# --- in your training file ---
+dataset = FDIADataset("./")
+
+# 80/20 split
+train_len = int(0.8 * len(dataset))
+val_len   = len(dataset) - train_len
+train_dataset, val_dataset = random_split(
+    dataset,
+    [train_len, val_len],
+    generator=torch.Generator().manual_seed(42)  # for reproducibility
+)
+
+train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+val_loader   = DataLoader(val_dataset,   batch_size=4)
+
+# now `dataset.num_node_features` isn’t set, but you can grab it from one example:
+in_feats = dataset[0].x.size(1)
+
+
+
+
+
+
+
+
 
 # --- 1) Prepare your data (PyG dataset) ---
 # Assume you have a PyG `InMemoryDataset` where each Data.y is a long tensor
@@ -28,17 +72,17 @@ val_loader   = DataLoader(val_dataset,   batch_size=4)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 model = GNNArmaTransformer(
-    in_channels=dataset.num_node_features,
-    hidden_channels=128,
-    gnn_out_channels=256,
-    num_stacks=4, 
-    num_layers=8,
-    transformer_heads=8,
-    transformer_layers=4
+    in_channels=in_feats,
+    hidden_channels=config["hidden_channels"],
+    gnn_out_channels=config["gnn_out_channels"],
+    num_stacks=config["num_stacks"], 
+    num_layers=config["num_layers"],
+    transformer_heads=config["transformer_heads"],
+    transformer_layers=config["transformer_layers"]
 ).to(device)
 
 criterion = nn.CrossEntropyLoss()            # maps logits [N,2] + labels [N] → scalar
-optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+optimizer = optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
 scheduler = optim.lr_scheduler.StepLR(
     optimizer, step_size=20, gamma=0.5
 )
@@ -71,8 +115,7 @@ def evaluate(loader):
     return correct / total
 
 # --- 4) Run training loop ---
-num_epochs = 50
-for epoch in range(1, num_epochs+1):
+for epoch in range(1, config["num_epochs"]+1):
     loss     = train_epoch()
     val_acc  = evaluate(val_loader)
     scheduler.step()
