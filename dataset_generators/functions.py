@@ -3,7 +3,7 @@ import numpy as np
 # TODO: To be deleted
 import sys
 
-def saveNetwork( X, target, i, attack_type):
+def saveNetwork( X, target, i):
   """
   Saves the network into a Ad(or As)_dataset folder
 
@@ -18,16 +18,13 @@ def saveNetwork( X, target, i, attack_type):
   i : Integer
     Current iteration (i from 0 to 36000)
 
-  attack_type: String
-    Type of the FDIA. 's' = data scale, 'd' = distribution-based
-
     
   Returns:
   -------
     None
   """
-  np.save(f"../A{attack_type}_dataset/x{i}", X)
-  np.save(f"../A{attack_type}_dataset/target{i}", target)
+  np.save(f"../dataset/x_{i}", X)
+  np.save(f"../dataset/target_{i}", target)
 
 
 
@@ -47,9 +44,6 @@ def loadDataset( i ):
   -------
   X : NumPy array filled with float values
     Node features array
-    
-  Attacked_mat: NumPy array filled with float values
-    Matrix of nodes' attacked status
 
   mask : NumPy array filled with boolean values
     Boolean mask used to selectively modify only the rows of data corresponding to True values in it
