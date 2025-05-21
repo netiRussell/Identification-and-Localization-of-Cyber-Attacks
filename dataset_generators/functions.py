@@ -1,4 +1,7 @@
 import numpy as np
+import os
+import torch
+from datetime import datetime
 
 # TODO: To be deleted
 import sys
@@ -57,6 +60,8 @@ def loadDataset( i ):
   mask = np.full(2848, False, dtype="bool")
 
   if(np.random.rand() <= 0.4):
+    print("There will be an attack")
+    
     # Randomly pick number of buses to be attacked (up to 15)
     num_buses_tobe_attacked = np.random.randint(1, 16)
 
@@ -74,6 +79,39 @@ def loadDataset( i ):
 
 
   return X, mask
+
+
+def save_checkpoint(state, path='../saved_grads/'):
+    """
+    Saves current progress as a .tar file
+
+    Parameters:
+    ----------
+    state : a Python object
+      Object containing model's and optimizer's parameters
+      
+    path: a string
+      Path to the folder where the file containing current state will be saved
+
+      
+    Returns:
+    -------
+      None
+    """
+    # Get current date and time
+    now = datetime.now()
+    timestamp = now.strftime("%Y_%m_%d.%H_%M")
+    
+    # Define the final path with file name
+    finalPath = path + "checkpoint" + timestamp + ".pth.tar"
+    
+    # Make sure not to overwrite previous saved grads
+    counter = 0
+    while(os.path.isfile(finalPath)):
+        finalPath = finalPath = path + "checkpoint" + counter + timestamp + ".pth.tar"
+        counter += 1
+    
+    torch.save(state, finalPath)
 
 
 # # # # # # # # # # # # # # # #
