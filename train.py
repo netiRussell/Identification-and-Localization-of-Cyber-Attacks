@@ -27,10 +27,9 @@ config = {
               "batch_size": 256,
               "lr": 1e-3, 
               "weight_decay": 1e-5,
-              "save_freq": 10, # saving progress once in how many batches
               
               "hidden_channels": 128,
-              "out_channels": 512,
+              "out_channels": 256,
               "num_stacks": 4, 
               "num_layers": 5,
               
@@ -84,17 +83,25 @@ scheduler = optim.lr_scheduler.StepLR(
 
 
 # -- Training & evaluation functions --
-def train_epoch():
+def train_epoch(epoch):
     model.train()
     total_loss = 0
+    accum_steps = 8              # 256→32-sized micro-batches
+    optimizer.zero_grad()
+    
     for batch_id, batch in enumerate(train_loader):
         batch = batch.to(device)
-        optimizer.zero_grad()
         logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)    # [total_nodes, 2]
         loss   = criterion(logits, batch.y)
-        loss.backward()
-        optimizer.step()
         total_loss += loss.item()
+
+        # scale down the loss so grads are averaged over accum_steps
+        (loss / accum_steps).backward()
+        print(f"Epoch#{epoch} Batch#{batch_id} | Current loss: {loss}")
+        
+        if batch_id % accum_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
         
     return total_loss / len(train_loader)
 
@@ -119,7 +126,7 @@ losses = []
 accuracies = []
 
 for epoch in range(1, config["num_epochs"]+1):
-    loss = train_epoch()
+    loss = train_epoch(epoch)
     losses.append(loss)
             
     
@@ -140,10 +147,15 @@ for epoch in range(1, config["num_epochs"]+1):
                 })
     print('The model has been successfully saved')
     
+    # Clear cache to keep RAM usage low
+    torch.cuda.empty_cache()
+    import gc; gc.collect()
+    
     if( len(losses) > 16 ):
         current_difference = losses[-17] - losses[-1]
         if(current_difference < 1e-4):
             print(f'Early stop of the training to prevent overfitting. losses[-17]: {losses[-17]}, losses[-1]: {losses[-1]}')
+            break
 
 
 # # # # # # # # # # #
