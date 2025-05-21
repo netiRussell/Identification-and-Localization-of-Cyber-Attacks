@@ -100,16 +100,18 @@ def save_checkpoint(state, path='../saved_grads/'):
     """
     # Get current date and time
     now = datetime.now()
-    timestamp = now.strftime("%Y_%m_%d.%H_%M")
+    timestamp = now.strftime("%Y_%m_%d")
     
     # Define the final path with file name
     finalPath = path + "checkpoint" + timestamp + ".pth.tar"
     
+    """
     # Make sure not to overwrite previous saved grads
     counter = 0
     while(os.path.isfile(finalPath)):
         finalPath = finalPath = path + "checkpoint" + counter + timestamp + ".pth.tar"
         counter += 1
+    """
     
     torch.save(state, finalPath)
 
