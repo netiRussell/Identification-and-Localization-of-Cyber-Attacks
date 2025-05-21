@@ -4,12 +4,16 @@ import torch.optim as optim
 from torch_geometric.loader import DataLoader
 from model.ARMA_Transformer import GNNArmaTransformer
 from torch.utils.data import random_split
+
 from dataset import FDIADataset
+from dataset_generators.functions import save_checkpoint
+
+# TODO: delete at the final stage
+import sys
 
 '''
 Questions:
-1) Is it okay to have more than 36k samples?
-2) Is it okay to have 1-15 buses attacked instead of 5-15?
+1) Is it okay to randomly apply either As or Ad attack to get resulting 36k samples.
 
 Input: edge_indices, weights, node features
 Output: 2848 boolean values where False means no attack on the bus and Trues means the bus has been attacked
@@ -17,64 +21,53 @@ Output: 2848 boolean values where False means no attack on the bus and Trues mea
 
 
 config = {
-              "num_epochs": 6,
+              "dataset_root": "./dataset",
+    
+              "num_epochs": 256,
+              "batch_size": 256,
               "lr": 1e-3, 
               "weight_decay": 1e-5,
               
               "hidden_channels": 128,
-              "gnn_out_channels": 256,
+              "out_channels": 256,
               "num_stacks": 4, 
-              "num_layers": 8,
-              "transformer_heads": 8,
-              "transformer_layers": 4
+              "num_layers": 5,
+              
+              "transformer_layers": 6,
+              "transformer_heads": 8
           }
 
 
 
 
-# --- in your training file ---
-dataset = FDIADataset("./")
+# --- Prepare the dataset ---
+dataset = FDIADataset(config["dataset_root"])
 
-# 80/20 split
-train_len = int(0.8 * len(dataset))
-val_len   = len(dataset) - train_len
-train_dataset, val_dataset = random_split(
+# 4/6 1/6 1/6 split
+train_len = int(4/6 * len(dataset))
+val_len   = int(1/6 * len(dataset))
+test_len   = int(1/6 * len(dataset))
+
+train_dataset, val_dataset, test_dataset = random_split(
     dataset,
-    [train_len, val_len],
-    generator=torch.Generator().manual_seed(42)  # for reproducibility
+    [train_len, val_len, test_len],
+    generator=torch.Generator().manual_seed(123)  # for reproducibility
 )
 
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-val_loader   = DataLoader(val_dataset,   batch_size=4)
+train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
+val_loader   = DataLoader(val_dataset,   batch_size=config["batch_size"])
 
-# now `dataset.num_node_features` isn’t set, but you can grab it from one example:
 in_feats = dataset[0].x.size(1)
 
 
-
-
-
-
-
-
-
-# --- 1) Prepare your data (PyG dataset) ---
-# Assume you have a PyG `InMemoryDataset` where each Data.y is a long tensor
-# of size [num_nodes] with values 0 (safe) or 1 (attacked).
-
-dataset = ...                # your full dataset
-train_dataset, val_dataset = dataset[:len(dataset)//2], dataset[len(dataset)//2:]
-
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-val_loader   = DataLoader(val_dataset,   batch_size=4)
-
-# --- 2) Instantiate model, loss, optimizer, scheduler ---
+# -- Instantiate model, loss, optimizer, scheduler --
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Device selected: {device}")
 
 model = GNNArmaTransformer(
     in_channels=in_feats,
     hidden_channels=config["hidden_channels"],
-    gnn_out_channels=config["gnn_out_channels"],
+    out_channels=config["out_channels"],
     num_stacks=config["num_stacks"], 
     num_layers=config["num_layers"],
     transformer_heads=config["transformer_heads"],
@@ -87,18 +80,29 @@ scheduler = optim.lr_scheduler.StepLR(
     optimizer, step_size=20, gamma=0.5
 )
 
-# --- 3) Training & evaluation functions ---
-def train_epoch():
+
+
+# -- Training & evaluation functions --
+def train_epoch(epoch):
     model.train()
     total_loss = 0
-    for batch in train_loader:
+    accum_steps = 8              # 256→32-sized micro-batches
+    optimizer.zero_grad()
+    
+    for batch_id, batch in enumerate(train_loader):
         batch = batch.to(device)
-        optimizer.zero_grad()
-        logits = model(batch.x, batch.edge_index)    # [total_nodes, 2]
+        logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)    # [total_nodes, 2]
         loss   = criterion(logits, batch.y)
-        loss.backward()
-        optimizer.step()
         total_loss += loss.item()
+
+        # scale down the loss so grads are averaged over accum_steps
+        (loss / accum_steps).backward()
+        print(f"Epoch#{epoch} Batch#{batch_id} | Current loss: {loss}")
+        
+        if batch_id % accum_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+        
     return total_loss / len(train_loader)
 
 @torch.no_grad()
@@ -108,19 +112,57 @@ def evaluate(loader):
     total   = 0
     for batch in loader:
         batch = batch.to(device)
-        logits = model(batch.x, batch.edge_index)
+        logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)
         preds  = logits.argmax(dim=1)
         correct += (preds == batch.y).sum().item()
         total   += batch.num_nodes
     return correct / total
 
-# --- 4) Run training loop ---
+
+# # # # # # # # # # # # # # # # # # #
+# ---- Training and validation ---- #
+# # # # # # # # # # # # # # # # # # #
+losses = []
+accuracies = []
+
 for epoch in range(1, config["num_epochs"]+1):
-    loss     = train_epoch()
+    loss = train_epoch(epoch)
+    losses.append(loss)
+            
+    
     val_acc  = evaluate(val_loader)
+    accuracies.append(val_acc)
+    
     scheduler.step()
     print(f"Epoch {epoch:02d} | Train Loss: {loss:.4f} | Val Acc: {val_acc:.4f}")
+    
+    # -- Save progress of training --
+    save_checkpoint({
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'config': config,
+                'currentEpoch': epoch,
+                'losses': losses,
+                'accuracies': accuracies,
+                })
+    print('The model has been successfully saved')
+    
+    # Clear cache to keep RAM usage low
+    torch.cuda.empty_cache()
+    import gc; gc.collect()
+    
+    if( len(losses) > 16 ):
+        current_difference = losses[-17] - losses[-1]
+        if(current_difference < 1e-4):
+            print(f'Early stop of the training to prevent overfitting. losses[-17]: {losses[-17]}, losses[-1]: {losses[-1]}')
+            break
 
-# --- 5) After training: get attacked IDs on a new graph ---
-# data = your test Data object
+
+# # # # # # # # # # #
+# ---- Testing ---- #
+# # # # # # # # # # #
+
+# TODO: to be implemented in a separate file with the same
+# random split manual_seed = 123
+#
 # attacked_ids = predict_attacked_buses(model, data, threshold=0.5)

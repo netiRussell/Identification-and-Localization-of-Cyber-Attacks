@@ -136,21 +136,20 @@ neighbors = [
 np.save("../init_dataset/neighbors", np.array(neighbors, dtype=object))
 
 # -- Extract edges and weights --
-edges = []
+edges = [[],[]]
 weights = []
 
 for u, v, data in G.edges(data=True):
-    edges.append([u, v])
+    edges[0].append(u)
+    edges[1].append(v)
     weights.append(data["z_ohm"])
 
 # -- Save the net structure as edge indices and correpsonding weights  --
 np.save("../init_dataset/edge_indices", edges)
-np.save("../Ad_dataset/edge_indices", edges)
-np.save("../As_dataset/edge_indices", edges)
+np.save("../dataset/edge_indices", edges)
 
 np.save("../init_dataset/weights", weights)
-np.save("../Ad_dataset/weights", weights)
-np.save("../As_dataset/weights", weights)
+np.save("../dataset/weights", weights)
 
 # -- Run the AC algorithm with differently scaled loads 36000 times --
 for i in range(36000):
