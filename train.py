@@ -4,6 +4,7 @@ import torch.optim as optim
 from torch_geometric.loader import DataLoader
 from model.ARMA_Transformer import GNNArmaTransformer
 from torch.utils.data import random_split
+import gc
 
 from dataset import FDIADataset
 from dataset_generators.functions import save_checkpoint
@@ -24,7 +25,7 @@ config = {
               "dataset_root": "./dataset",
     
               "num_epochs": 256,
-              "batch_size": 256,
+              "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
               "weight_decay": 1e-5,
               
@@ -86,36 +87,39 @@ scheduler = optim.lr_scheduler.StepLR(
 def train_epoch(epoch):
     model.train()
     total_loss = 0
-    accum_steps = 8              # 256→32-sized micro-batches
+    accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
     optimizer.zero_grad()
     
-    for batch_id, batch in enumerate(train_loader):
-        batch = batch.to(device)
-        logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)    # [total_nodes, 2]
-        loss   = criterion(logits, batch.y)
+    for minibatch_id, minibatch in enumerate(train_loader):
+        minibatch = minibatch.to(device)
+        logits = model(minibatch.x, minibatch.edge_index, weights=minibatch.edge_attr, batch=minibatch.batch)    # [total_nodes, 2]
+        loss   = criterion(logits, minibatch.y)
         total_loss += loss.item()
 
         # scale down the loss so grads are averaged over accum_steps
         (loss / accum_steps).backward()
-        print(f"Epoch#{epoch} Batch#{batch_id} | Current loss: {loss}")
+        print(f"Epoch#{epoch} Mini-Batch#{minibatch_id} | Current loss: {loss:.4f}")
         
-        if batch_id % accum_steps == 0:
+        if minibatch_id % accum_steps == 0:
+            print("One batch is finished")
             optimizer.step()
             optimizer.zero_grad()
         
     return total_loss / len(train_loader)
 
 @torch.no_grad()
-def evaluate(loader):
+def evaluate(eval_loader):
     model.eval()
     correct = 0
     total   = 0
-    for batch in loader:
+    for batch in eval_loader:
         batch = batch.to(device)
         logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)
         preds  = logits.argmax(dim=1)
         correct += (preds == batch.y).sum().item()
         total   += batch.num_nodes
+    
+    print(f"Current validation score: {correct / total}")
     return correct / total
 
 
@@ -149,7 +153,7 @@ for epoch in range(1, config["num_epochs"]+1):
     
     # Clear cache to keep RAM usage low
     torch.cuda.empty_cache()
-    import gc; gc.collect()
+    gc.collect()
     
     if( len(losses) > 16 ):
         current_difference = losses[-17] - losses[-1]
