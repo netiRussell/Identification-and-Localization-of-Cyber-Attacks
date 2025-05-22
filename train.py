@@ -4,13 +4,20 @@ import torch.optim as optim
 from torch_geometric.loader import DataLoader
 from model.ARMA_Transformer import GNNArmaTransformer
 from torch.utils.data import random_split
+from torch.amp import autocast, GradScaler
 import gc
+
 
 from dataset import FDIADataset
 from dataset_generators.functions import save_checkpoint
 
 # TODO: delete at the final stage
 import sys
+
+
+# Clear cache from the previous training:
+torch.cuda.empty_cache()
+gc.collect()
 
 '''
 Questions:
@@ -63,6 +70,7 @@ in_feats = dataset[0].x.size(1)
 
 # -- Instantiate model, loss, optimizer, scheduler --
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+torch.backends.cudnn.benchmark = True
 print(f"Device selected: {device}")
 
 model = GNNArmaTransformer(
@@ -73,13 +81,17 @@ model = GNNArmaTransformer(
     num_layers=config["num_layers"],
     transformer_heads=config["transformer_heads"],
     transformer_layers=config["transformer_layers"]
-).to(device)
+)
+model = torch.compile(model, backend="aot_eager")
+model = model.to(device)
 
 criterion = nn.CrossEntropyLoss()            # maps logits [N,2] + labels [N] → scalar
 optimizer = optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
 scheduler = optim.lr_scheduler.StepLR(
     optimizer, step_size=20, gamma=0.5
 )
+use_cuda = (device.type == 'cuda')
+scaler = GradScaler(enabled=use_cuda)
 
 
 
@@ -92,17 +104,20 @@ def train_epoch(epoch):
     
     for minibatch_id, minibatch in enumerate(train_loader):
         minibatch = minibatch.to(device)
-        logits = model(minibatch.x, minibatch.edge_index, weights=minibatch.edge_attr, batch=minibatch.batch)    # [total_nodes, 2]
-        loss   = criterion(logits, minibatch.y)
-        total_loss += loss.item()
+        
+        with autocast(device_type=device.type, enabled=use_cuda):   
+            logits = model(minibatch.x, minibatch.edge_index, weights=minibatch.edge_attr, batch=minibatch.batch)    # [total_nodes, 2]
+            loss   = criterion(logits, minibatch.y)
+            total_loss += loss.item()
 
         # scale down the loss so grads are averaged over accum_steps
-        (loss / accum_steps).backward()
+        scaler.scale(loss / accum_steps).backward()
         print(f"Epoch#{epoch} Mini-Batch#{minibatch_id} | Current loss: {loss:.4f}")
         
-        if minibatch_id % accum_steps == 0:
+        if (minibatch_id+1) % accum_steps == 0:
             print("One batch is finished")
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             optimizer.zero_grad()
         
     return total_loss / len(train_loader)
@@ -150,10 +165,6 @@ for epoch in range(1, config["num_epochs"]+1):
                 'accuracies': accuracies,
                 })
     print('The model has been successfully saved')
-    
-    # Clear cache to keep RAM usage low
-    torch.cuda.empty_cache()
-    gc.collect()
     
     if( len(losses) > 16 ):
         current_difference = losses[-17] - losses[-1]
