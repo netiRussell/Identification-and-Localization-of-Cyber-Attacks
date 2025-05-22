@@ -81,7 +81,7 @@ def loadDataset( i ):
   return X, mask
 
 
-def save_checkpoint(state, path='../saved_grads/'):
+def save_checkpoint(state, path='./saved_grads/'):
     """
     Saves current progress as a .tar file
 

@@ -56,7 +56,7 @@ train_len = int(4/6 * len(dataset))
 val_len   = int(1/6 * len(dataset))
 test_len   = int(1/6 * len(dataset))
 
-train_dataset, val_dataset, test_dataset = random_split(
+train_dataset, val_dataset, _ = random_split(
     dataset,
     [train_len, val_len, test_len],
     generator=torch.Generator().manual_seed(123)  # for reproducibility
@@ -112,27 +112,27 @@ def train_epoch(epoch):
 
         # scale down the loss so grads are averaged over accum_steps
         scaler.scale(loss / accum_steps).backward()
-        print(f"Epoch#{epoch} Mini-Batch#{minibatch_id} | Current loss: {loss:.4f}")
         
         if (minibatch_id+1) % accum_steps == 0:
-            print("One batch is finished")
+            print(f"Epoch#{epoch}, Batch#{minibatch_id // accum_steps} | Current loss: {loss:.4f}")
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
         
     return total_loss / len(train_loader)
 
-@torch.no_grad()
-def evaluate(eval_loader):
+
+@torch.no_grad() # TODO is it in the right place?
+def evaluate(eval_loader, batch_size):
     model.eval()
     correct = 0
-    total   = 0
+    total   = len(eval_loader) * batch_size * 2848
+    
     for batch in eval_loader:
         batch = batch.to(device)
         logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)
         preds  = logits.argmax(dim=1)
         correct += (preds == batch.y).sum().item()
-        total   += batch.num_nodes
     
     print(f"Current validation score: {correct / total}")
     return correct / total
@@ -149,7 +149,7 @@ for epoch in range(1, config["num_epochs"]+1):
     losses.append(loss)
             
     
-    val_acc  = evaluate(val_loader)
+    val_acc  = evaluate(val_loader, config['batch_size'])
     accuracies.append(val_acc)
     
     scheduler.step()
