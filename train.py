@@ -114,7 +114,7 @@ def train_epoch(epoch):
         scaler.scale(loss / accum_steps).backward()
         
         if (minibatch_id+1) % accum_steps == 0:
-            print(f"Epoch#{epoch}, Batch#{minibatch_id // accum_steps} | Current loss: {loss:.4f}")
+            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
@@ -126,15 +126,21 @@ def train_epoch(epoch):
 def evaluate(eval_loader, batch_size):
     model.eval()
     correct = 0
+    strict_correct = 0
     total   = len(eval_loader) * batch_size * 2848
     
     for batch in eval_loader:
         batch = batch.to(device)
         logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)
         preds  = logits.argmax(dim=1)
-        correct += (preds == batch.y).sum().item()
+        current_correct = (preds == batch.y).sum().item()
+        correct += current_correct
+        
+        if(current_correct == len(batch.y)):
+            strict_correct +=1
     
-    print(f"Current validation score: {correct / total}")
+    print(f"Current validation score: {((correct / total) * 100):.2f}%")
+    print(f"Entire mini-batch correctness: {((strict_correct / len(eval_loader))*100):.2f}%")
     return correct / total
 
 
@@ -144,16 +150,15 @@ def evaluate(eval_loader, batch_size):
 losses = []
 accuracies = []
 
-for epoch in range(1, config["num_epochs"]+1):
+for epoch in range(1, config["num_epochs"]+1):    
     loss = train_epoch(epoch)
-    losses.append(loss)
-            
+    losses.append(loss)      
     
     val_acc  = evaluate(val_loader, config['batch_size'])
     accuracies.append(val_acc)
     
     scheduler.step()
-    print(f"Epoch {epoch:02d} | Train Loss: {loss:.4f} | Val Acc: {val_acc:.4f}")
+    print(f"Average train loss: {loss:.4f}")
     
     # -- Save progress of training --
     save_checkpoint({
@@ -164,20 +169,10 @@ for epoch in range(1, config["num_epochs"]+1):
                 'losses': losses,
                 'accuracies': accuracies,
                 })
-    print('The model has been successfully saved')
+    print('The model has been successfully saved\n')
     
     if( len(losses) > 16 ):
         current_difference = losses[-17] - losses[-1]
         if(current_difference < 1e-4):
             print(f'Early stop of the training to prevent overfitting. losses[-17]: {losses[-17]}, losses[-1]: {losses[-1]}')
             break
-
-
-# # # # # # # # # # #
-# ---- Testing ---- #
-# # # # # # # # # # #
-
-# TODO: to be implemented in a separate file with the same
-# random split manual_seed = 123
-#
-# attacked_ids = predict_attacked_buses(model, data, threshold=0.5)

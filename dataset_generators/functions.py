@@ -2,6 +2,7 @@ import numpy as np
 import os
 import torch
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 # TODO: To be deleted
 import sys
@@ -114,6 +115,34 @@ def save_checkpoint(state, path='./saved_grads/'):
     """
     
     torch.save(state, finalPath)
+
+
+"""
+#TODO: finish
+Brief description ...
+
+Parameters:
+----------
+state : a Python object
+  Object containing model's and optimizer's parameters
+  
+path: a string
+  Path to the folder where the file containing current state will be saved
+
+  
+Returns:
+-------
+  None
+"""
+def visualizeLossValid(losses, accuracies):
+
+  plt.plot(range(1, len(losses[0]) + 1), losses[0], marker='o')
+  plt.title('Training Loss Curve')
+  plt.xlabel('Batch')
+  plt.ylabel('Average loss')
+  plt.grid()
+
+  plt.show()
 
 
 # # # # # # # # # # # # # # # #
