@@ -10,11 +10,11 @@ class FDIADataset(torch.utils.data.Dataset):
         
         # Save repetitive components just once
         # edge_index: shape [2, num_edges]
-        ei = np.load(self.root + "/" + "edge_indices.npy")
+        ei = np.load(self.root + "/" + "edge_indices.npy", mmap_mode='r')
         self.edge_index = torch.tensor(ei, dtype=torch.long)
         
         # edge weights (impedances): shape [num_edges]
-        w = np.load(os.path.join(self.root, "weights.npy"))
+        w = np.load(os.path.join(self.root, "weights.npy"), mmap_mode='r')
         # turn into shape [num_edges, 1] so it can be Data.edge_attr
         self.edge_attr = torch.tensor(w, dtype=torch.float).unsqueeze(-1)
         
