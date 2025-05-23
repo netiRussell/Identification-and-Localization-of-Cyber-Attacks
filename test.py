@@ -12,7 +12,7 @@ import sys
 
 
 # -- Load the saved state --
-checkpoint = torch.load('./saved_grads/initial_state.tar')
+checkpoint = torch.load('./saved_grads/checkpoint2025_05_22.pth.tar')
 config = checkpoint['config']
 
 

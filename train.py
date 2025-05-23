@@ -6,6 +6,7 @@ from model.ARMA_Transformer import GNNArmaTransformer
 from torch.utils.data import random_split
 from torch.amp import autocast, GradScaler
 import gc
+import time
 
 
 from dataset import FDIADataset
@@ -37,7 +38,7 @@ config = {
               "weight_decay": 1e-5,
               
               "hidden_channels": 128,
-              "out_channels": 256,
+              "out_channels": 512,
               "num_stacks": 4, 
               "num_layers": 5,
               
@@ -147,10 +148,11 @@ def evaluate(eval_loader, batch_size):
 # # # # # # # # # # # # # # # # # # #
 # ---- Training and validation ---- #
 # # # # # # # # # # # # # # # # # # #
+start = time.time()
 losses = []
 accuracies = []
 
-for epoch in range(1, config["num_epochs"]+1):    
+for epoch in range(1, config["num_epochs"]+1):
     loss = train_epoch(epoch)
     losses.append(loss)      
     
@@ -166,13 +168,16 @@ for epoch in range(1, config["num_epochs"]+1):
                 'optimizer_state_dict': optimizer.state_dict(),
                 'config': config,
                 'currentEpoch': epoch,
+                'trainingTime': time.time() - start,
                 'losses': losses,
                 'accuracies': accuracies,
                 })
     print('The model has been successfully saved\n')
+    
     
     if( len(losses) > 16 ):
         current_difference = losses[-17] - losses[-1]
         if(current_difference < 1e-4):
             print(f'Early stop of the training to prevent overfitting. losses[-17]: {losses[-17]}, losses[-1]: {losses[-1]}')
             break
+
