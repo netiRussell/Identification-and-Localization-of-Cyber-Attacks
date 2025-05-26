@@ -60,7 +60,7 @@ def loadDataset( i ):
   num_buses_tobe_attacked = 0
   mask = np.full(2848, False, dtype="bool")
 
-  if(np.random.rand() <= 0.4):
+  if(np.random.rand() <= 0.5):
     print("There will be an attack")
     
     # Randomly pick number of buses to be attacked (up to 15)
