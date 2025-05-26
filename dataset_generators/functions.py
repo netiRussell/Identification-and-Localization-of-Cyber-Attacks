@@ -135,14 +135,26 @@ Returns:
   None
 """
 def visualizeLossValid(losses, accuracies):
-
-  plt.plot(range(1, len(losses[0]) + 1), losses[0], marker='o')
-  plt.title('Training Loss Curve')
-  plt.xlabel('Batch')
-  plt.ylabel('Average loss')
-  plt.grid()
-
-  plt.show()
+    # Create a figure with two subplots side by side
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    
+    # First plot
+    ax1.plot(range(1,len(losses)+1), losses, label='Losses')
+    ax1.set_title('Losses over epoch')
+    ax1.set_xlabel('Epoch #')
+    ax1.set_ylabel('Loss')
+    ax1.legend()
+    
+    # Second plot
+    ax2.plot(range(1, len(accuracies)+1), accuracies, label='Accuracies')
+    ax2.set_title('Accuracies over epoch')
+    ax2.set_xlabel('Epoch #')
+    ax2.set_ylabel('Accuracy')
+    ax2.legend()
+    
+    # Adjust layout and show the plot
+    plt.tight_layout()
+    plt.show()
 
 
 # # # # # # # # # # # # # # # #
