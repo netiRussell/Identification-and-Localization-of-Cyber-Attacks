@@ -74,5 +74,5 @@ for batch in test_loader:
 
 print(f"Test score: {((strict_correct / total) * 100):.2f}%")
 
-visualizeLossValid(checkpoint["prec"], checkpoint["rec"], checkpoint["f1"])
+visualizeLossValid(checkpoint["prec"], checkpoint["rec"], checkpoint["f1"], checkpoint["accuracies"])
 

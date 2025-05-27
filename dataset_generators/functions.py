@@ -117,47 +117,61 @@ def save_checkpoint(state, path='./saved_grads/'):
     torch.save(state, finalPath)
 
 
-"""
-#TODO: finish
-Brief description ...
 
-Parameters:
-----------
-state : a Python object
-  Object containing model's and optimizer's parameters
-  
-path: a string
-  Path to the folder where the file containing current state will be saved
+def visualizeLossValid(prec, rec, f1, acc):
+    """
+    Visualizes precision, recall, f1, and accuracy collected during the training
+    
 
-  
-Returns:
--------
-  None
-"""
-def visualizeLossValid(prec, rec, f1):
+    Parameters:
+    ----------
+    prec: a NumPy array
+      An array that contains precision values from each epoch of the training
+      
+    rec: a NumPy array
+      An array that contains recall values from each epoch of the training
+    
+    f1: a NumPy array
+      An array that contains F1 values from each epoch of the training
+    
+    acc: a NumPy array
+      An array that contains accuracy values from each epoch of the training
+
+      
+    Returns:
+    -------
+      None
+    """
     # Create a figure with two subplots side by side
-    fig, (g1, g2, g3) = plt.subplots(1, 3)
+    fig, (g1, g2, g3, g4) = plt.subplots(2, 2)
     
     # First plot
-    g1.plot(range(1,len(prec)+1), prec, label='Precisions')
+    g1.plot(range(1,len(prec)+1), prec, label='Precision')
     g1.set_title('Precision over epoch')
     g1.set_xlabel('Epoch #')
     g1.set_ylabel('Precision')
     g1.legend()
     
     # Second plot
-    g2.plot(range(1, len(rec)+1), rec, label='Recalls')
+    g2.plot(range(1, len(rec)+1), rec, label='Recall')
     g2.set_title('Recall over epoch')
     g2.set_xlabel('Epoch #')
     g2.set_ylabel('Recall')
     g2.legend()
     
     # Third plot
-    g2.plot(range(1, len(f1)+1), f1, label='F1')
-    g2.set_title('F1 over epoch')
-    g2.set_xlabel('Epoch #')
-    g2.set_ylabel('F1')
-    g2.legend()
+    g3.plot(range(1, len(f1)+1), f1, label='F1')
+    g3.set_title('F1 over epoch')
+    g3.set_xlabel('Epoch #')
+    g3.set_ylabel('F1')
+    g3.legend()
+    
+    # Third plot
+    g4.plot(range(1, len(acc)+1), acc, label='Accuracy')
+    g4.set_title('Accuracy over epoch')
+    g4.set_xlabel('Epoch #')
+    g4.set_ylabel('Accuracy')
+    g4.legend()
     
     # Adjust layout and show the plot
     plt.tight_layout()

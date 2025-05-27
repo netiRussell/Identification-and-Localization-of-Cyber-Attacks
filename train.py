@@ -162,14 +162,23 @@ def evaluate(val_loader):
     with torch.no_grad():
         model.eval()
         all_preds, all_targets = [], []
+        strict_correct = 0
         
         for batch in val_loader:
             batch = batch.to(device)
             logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)
+            
             preds = logits.argmax(dim=1).cpu().numpy()
             targets = batch.y.cpu().numpy()
+            current_correct = (preds == batch.y).sum().item()
+            
+            if(current_correct == len(batch.y)):
+                strict_correct +=1
+            
             all_preds.append(preds)
             all_targets.append(targets)
+             
+            
         
         all_preds = np.concatenate(all_preds)
         all_targets = np.concatenate(all_targets)
@@ -177,7 +186,7 @@ def evaluate(val_loader):
         recall = recall_score(all_targets, all_preds, zero_division=0)
         f1 = f1_score(all_targets, all_preds, zero_division=0)
         
-        return precision, recall, f1
+        return precision, recall, f1, ((strict_correct / len(val_loader))*100)
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -186,12 +195,15 @@ def evaluate(val_loader):
 best_f1 = 0.0
 patience_counter = 0
 start = time.time()
+accuracies = np.array()
+
 for epoch in range(1, config["num_epochs"] + 1):
     train_loss = train_epoch(epoch)
-    prec, rec, f1 = evaluate(val_loader)
+    prec, rec, f1, accuracy = evaluate(val_loader)
+    accuracies.append(accuracy)
     scheduler.step(f1)
     elapsed = time.time() - start
-    print(f"Epoch {epoch}: Train Loss={train_loss:.4f}, Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}, Time={elapsed:.1f}s")
+    print(f"Epoch {epoch}: Average Train Loss={train_loss:.4f}, Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}, Time={elapsed:.1f}s")
 
     # save checkpoint
     save_checkpoint({
@@ -200,6 +212,7 @@ for epoch in range(1, config["num_epochs"] + 1):
         'config': config,
         'currentEpoch': epoch,
         'trainingTime': time.time() - start,
+        'accuracies': np.array(accuracies),
         'prec': prec,
         'rec': rec,
         'f1': f1
