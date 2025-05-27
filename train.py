@@ -16,19 +16,39 @@ from dataset_generators.functions import save_checkpoint
 import sys
 
 
-# Clear cache from the previous training:
+# -- Clear cache from the previous training --
 torch.cuda.empty_cache()
 gc.collect()
 
 '''
 Questions:
-1) Is it okay to randomly apply either As or Ad attack to get resulting 36k samples.
+...
 
 Input: edge_indices, weights, node features
 Output: 2848 boolean values where False means no attack on the bus and Trues means the bus has been attacked
 '''
 
+# -- Define focal loss criterion --
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
 
+    def forward(self, logits, targets):
+        prob = torch.softmax(logits, dim=1)
+        p_t = prob.gather(1, targets.unsqueeze(1)).squeeze(1)
+        loss = -self.alpha * (1 - p_t)**self.gamma * torch.log(p_t + 1e-9)
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:
+            return loss
+        
+    
+# -- Define the params and hyperparams for training --
 config = {
               "dataset_root": "./dataset",
     
@@ -38,7 +58,7 @@ config = {
               "weight_decay": 1e-5,
               
               "hidden_channels": 128,
-              "out_channels": 512,
+              "out_channels": 256,
               "num_stacks": 4, 
               "num_layers": 5,
               
@@ -86,7 +106,7 @@ model = GNNArmaTransformer(
 model = torch.compile(model, backend="aot_eager")
 model = model.to(device)
 
-criterion = nn.CrossEntropyLoss()            # maps logits [N,2] + labels [N] → scalar
+criterion = FocalLoss(alpha=0.25, gamma=2.0)
 optimizer = optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
 scheduler = optim.lr_scheduler.StepLR(
     optimizer, step_size=20, gamma=0.5
@@ -123,26 +143,26 @@ def train_epoch(epoch):
     return total_loss / len(train_loader)
 
 
-@torch.no_grad() # TODO is it in the right place?
 def evaluate(eval_loader, batch_size):
-    model.eval()
-    correct = 0
-    strict_correct = 0
-    total   = len(eval_loader) * batch_size * 2848
-    
-    for batch in eval_loader:
-        batch = batch.to(device)
-        logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)
-        preds  = logits.argmax(dim=1)
-        current_correct = (preds == batch.y).sum().item()
-        correct += current_correct
+    with torch.no_grad():
+        model.eval()
+        correct = 0
+        strict_correct = 0
+        total   = len(eval_loader) * batch_size * 2848
         
-        if(current_correct == len(batch.y)):
-            strict_correct +=1
-    
-    print(f"Current validation score: {((correct / total) * 100):.2f}%")
-    print(f"Entire mini-batch correctness: {((strict_correct / len(eval_loader))*100):.2f}%")
-    return correct / total
+        for batch in eval_loader:
+            batch = batch.to(device)
+            logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)
+            preds  = logits.argmax(dim=1)
+            current_correct = (preds == batch.y).sum().item()
+            correct += current_correct
+            
+            if(current_correct == len(batch.y)):
+                strict_correct +=1
+        
+        print(f"Current validation score: {((correct / total) * 100):.2f}%")
+        print(f"Entire mini-batch correctness: {((strict_correct / len(eval_loader))*100):.2f}%")
+        return ((strict_correct / len(eval_loader))*100)
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -178,6 +198,6 @@ for epoch in range(1, config["num_epochs"]+1):
     if( len(losses) > 16 ):
         current_difference = losses[-17] - losses[-1]
         if(current_difference < 1e-4):
-            print(f'Early stop of the training to prevent overfitting. losses[-17]: {losses[-17]}, losses[-1]: {losses[-1]}')
+            print(f"Early stop at epoch#{epoch}")
             break
 
