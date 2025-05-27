@@ -12,30 +12,26 @@ class GNNArma(nn.Module):
         super(GNNArma, self).__init__()
         self.conv1 = ARMAConv(in_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.bn1 = nn.BatchNorm1d(hidden_channels)
         
         self.conv2 = ARMAConv(hidden_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.bn2 = nn.BatchNorm1d(hidden_channels)
         
         self.conv3 = ARMAConv(hidden_channels, out_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.bn3 = nn.BatchNorm1d(out_channels)
+        self.bn = nn.BatchNorm1d(out_channels)
 
     def forward(self, x, edge_index, weights):
         # First ARMA layer
         x = self.conv1(x, edge_index, weights)
-        x = self.bn1(x)
         x = F.relu(x)
         
         # Second ARMA layer
         x = self.conv2(x, edge_index, weights)
-        x = self.bn2(x)
         x = F.relu(x)
         
         # Third ARMA layer
         x = self.conv3(x, edge_index, weights)
-        x = self.bn3(x)
+        x = self.bn(x)
         x = F.relu(x)
         return x
 
