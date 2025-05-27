@@ -13,7 +13,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 # -- Load the saved state --
-checkpoint = torch.load('./saved_grads/checkpoint2025_05_26.pth.tar')
+checkpoint = torch.load('./saved_grads/checkpoint2025_05_26.pth.tar', weights_only=False)
 config = checkpoint['config']
 
 # -- Prepare the dataset --

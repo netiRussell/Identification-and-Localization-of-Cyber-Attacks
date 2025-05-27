@@ -64,7 +64,7 @@ def loadDataset( i ):
     print("There will be an attack")
     
     # Randomly pick number of buses to be attacked (up to 15)
-    num_buses_tobe_attacked = np.random.randint(1, 16)
+    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.16) * 2848)
 
     # Load direct neighbors of each node
     neighbors = np.load("../init_dataset/neighbors.npy", allow_pickle = True).tolist()
@@ -203,5 +203,5 @@ def _bfs(root, k, neighbors):
         if len(out) >= k:
             break
         
-
+  print(f"# of buses attacked: {len(out)}")
   return out
