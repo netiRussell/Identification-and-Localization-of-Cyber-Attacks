@@ -13,7 +13,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 # -- Load the saved state --
-checkpoint = torch.load('./saved_grads/checkpoint2025_05_23.pth.tar')
+checkpoint = torch.load('./saved_grads/checkpoint2025_05_26.pth.tar')
 config = checkpoint['config']
 
 # -- Prepare the dataset --
@@ -74,5 +74,5 @@ for batch in test_loader:
 
 print(f"Test score: {((strict_correct / total) * 100):.2f}%")
 
-visualizeLossValid(checkpoint["losses"], checkpoint["accuracies"])
+visualizeLossValid(checkpoint["prec"], checkpoint["rec"], checkpoint["f1"])
 

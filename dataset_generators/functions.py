@@ -134,23 +134,30 @@ Returns:
 -------
   None
 """
-def visualizeLossValid(losses, accuracies):
+def visualizeLossValid(prec, rec, f1):
     # Create a figure with two subplots side by side
-    fig, (ax1, ax2) = plt.subplots(1, 2)
+    fig, (g1, g2, g3) = plt.subplots(1, 3)
     
     # First plot
-    ax1.plot(range(1,len(losses)+1), losses, label='Losses')
-    ax1.set_title('Losses over epoch')
-    ax1.set_xlabel('Epoch #')
-    ax1.set_ylabel('Loss')
-    ax1.legend()
+    g1.plot(range(1,len(prec)+1), prec, label='Precisions')
+    g1.set_title('Precision over epoch')
+    g1.set_xlabel('Epoch #')
+    g1.set_ylabel('Precision')
+    g1.legend()
     
     # Second plot
-    ax2.plot(range(1, len(accuracies)+1), accuracies, label='Accuracies')
-    ax2.set_title('Accuracies over epoch')
-    ax2.set_xlabel('Epoch #')
-    ax2.set_ylabel('Accuracy')
-    ax2.legend()
+    g2.plot(range(1, len(rec)+1), rec, label='Recalls')
+    g2.set_title('Recall over epoch')
+    g2.set_xlabel('Epoch #')
+    g2.set_ylabel('Recall')
+    g2.legend()
+    
+    # Third plot
+    g2.plot(range(1, len(f1)+1), f1, label='F1')
+    g2.set_title('F1 over epoch')
+    g2.set_xlabel('Epoch #')
+    g2.set_ylabel('F1')
+    g2.legend()
     
     # Adjust layout and show the plot
     plt.tight_layout()
