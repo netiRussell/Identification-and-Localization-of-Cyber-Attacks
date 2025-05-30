@@ -118,17 +118,17 @@ def save_checkpoint(state, path='./saved_grads/'):
 
 
 
-def visualizeLossValid(prec, rec, f1, acc):
+def visualizeLossValid(fa, dr, f1, acc):
     """
     Visualizes precision, recall, f1, and accuracy collected during the training
     
 
     Parameters:
     ----------
-    prec: a NumPy array
+    fa: a NumPy array
       An array that contains precision values from each epoch of the training
       
-    rec: a NumPy array
+    dr: a NumPy array
       An array that contains recall values from each epoch of the training
     
     f1: a NumPy array
@@ -146,17 +146,17 @@ def visualizeLossValid(prec, rec, f1, acc):
     fig, (g1, g2, g3, g4) = plt.subplots(2, 2)
     
     # First plot
-    g1.plot(range(1,len(prec)+1), prec, label='Precision')
-    g1.set_title('Precision over epoch')
+    g1.plot(range(1,len(fa)+1), fa, label='FA')
+    g1.set_title('FA over epoch')
     g1.set_xlabel('Epoch #')
-    g1.set_ylabel('Precision')
+    g1.set_ylabel('FA')
     g1.legend()
     
     # Second plot
-    g2.plot(range(1, len(rec)+1), rec, label='Recall')
-    g2.set_title('Recall over epoch')
+    g2.plot(range(1, len(dr)+1), dr, label='DR')
+    g2.set_title('DR over epoch')
     g2.set_xlabel('Epoch #')
-    g2.set_ylabel('Recall')
+    g2.set_ylabel('DR')
     g2.legend()
     
     # Third plot

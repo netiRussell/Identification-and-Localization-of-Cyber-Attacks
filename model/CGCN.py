@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import ChebConv, global_mean_pool
+from torch_geometric.nn import ChebConv, GraphNorm, global_mean_pool
 import torch.nn.utils as utils
 
 # TODO: to be deleted
@@ -23,19 +23,19 @@ class CGCN(nn.Module):
         super(CGCN, self).__init__()
         
         self.chebConv1 = ChebConv(in_channels, u, Ks)
-        self.bn1 = nn.BatchNorm1d(u)
+        self.gn1 = GraphNorm(u)
         self.dropout1 = nn.Dropout(dropout)
 
         self.chebConv2 = ChebConv(u, u, Ks)
-        self.bn2 = nn.BatchNorm1d(u)
+        self.gn2 = GraphNorm(u)
         self.dropout2 = nn.Dropout(dropout)
 
         self.chebConv3 = ChebConv(u, u, Ks)
-        self.bn3 = nn.BatchNorm1d(u)
+        self.gn3 = GraphNorm(u)
         self.dropout3 = nn.Dropout(dropout)
 
         self.chebConv4 = ChebConv(u, u, Ks)
-        self.bn4 = nn.BatchNorm1d(u)
+        self.gn4 = GraphNorm(u)
         self.dropout4 = nn.Dropout(dropout)
 
         self.dense = nn.Linear(u, 1) 
@@ -44,38 +44,36 @@ class CGCN(nn.Module):
         # 4 CGCN layers
         # Relu and Dropout are applied after each one of them
         x = self.chebConv1(x, edge_index, weights)
-        x = self.bn1(x)
+        x = self.gn1(x)
         x = F.relu(x)
         x = self.dropout1(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv1")
         
         x = self.chebConv2(x, edge_index, weights)
-        x = self.bn2(x)
+        x = self.gn2(x)
         x = F.relu(x)
         x = self.dropout2(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv2")
         
         x = self.chebConv3(x, edge_index, weights)
-        x = self.bn3(x)
+        x = self.gn3(x)
         x = F.relu(x)
         x = self.dropout3(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv3")
         
         x = self.chebConv4(x, edge_index, weights)
-        x = self.bn4(x)
+        x = self.gn4(x)
         x = F.relu(x)
         x = self.dropout4(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv4")
-
-
-        # Avoid NaN, inf
-        x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
         
         # Collapse nodes to a graph representation
         x = global_mean_pool(x, batch) # (batch_size, hidden)
+        # Avoid NaN, inf
+        x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
         return self.dense(x).squeeze(-1) # (batch_size,)
        

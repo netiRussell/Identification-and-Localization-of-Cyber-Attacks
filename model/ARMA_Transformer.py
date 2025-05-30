@@ -7,6 +7,15 @@ class GNNArma(nn.Module):
     """
     GNN encoder using ARMA filters.
     """
+    # TODO: add batch norm and resid. Make sure there are no inf or nan by
+    """
+    if torch.isnan(x).any() or torch.isinf(x).any():
+        raise RuntimeError("NaN/Inf in x → after chebConv3")
+        
+        and
+        
+    x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
+    """
     def __init__(self, in_channels, hidden_channels, out_channels, 
                  num_stacks=3, num_layers=2):
         super(GNNArma, self).__init__()
@@ -62,8 +71,6 @@ class GNNArmaTransformer(nn.Module):
         # Classifier
         self.classifier = nn.Linear(out_channels, 2)
         
-        # Sigmoid
-        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x, edge_index, weights, batch):
         # 1) GNN ARMA encoding
@@ -81,21 +88,17 @@ class GNNArmaTransformer(nn.Module):
         
         return logits
 
-# TODO: to be utilized for inference
-def predict_attacked_buses(model, data, threshold=0.5):
-    """
-    Runs model inference on a single PyG Data object and
-    returns a list of node indices predicted as attacked.
-    """
-    model.eval()
-    with torch.no_grad():
-        logits = model(data.x, data.edge_index)     # [num_nodes, 2]
-        probs = F.softmax(logits, dim=1)[:, 1]       # P(attack)
-        attacked_mask = probs > threshold
-        attacked_ids = attacked_mask.nonzero(as_tuple=False).view(-1).tolist()
-    return attacked_ids
 
-# Example usage:
-# model = GNNArmaTransformer(in_channels=F_in, hidden_channels=64, out_channels=128)
-# logits = model(data.x, data.edge_index)
-# attacked = predict_attacked_buses(model, data)
+"""
+Training Initialization:
+    
+model = GNNArmaTransformer(
+    in_channels=in_feats,
+    hidden_channels=config["hidden_channels"],
+    out_channels=config["out_channels"],
+    num_stacks=config["num_stacks"], 
+    num_layers=config["num_layers"],
+    transformer_heads=config["transformer_heads"],
+    transformer_layers=config["transformer_layers"]
+)
+"""

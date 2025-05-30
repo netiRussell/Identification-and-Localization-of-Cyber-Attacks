@@ -15,6 +15,7 @@ class FDIADataset(torch.utils.data.Dataset):
         
         # edge weights (impedances): shape [num_edges]
         w = np.load(os.path.join(self.root, "weights.npy"), mmap_mode='r')
+        
         # turn into shape [num_edges, 1] so it can be Data.edge_attr
         self.edge_attr = torch.tensor(w, dtype=torch.float).unsqueeze(-1)
         
