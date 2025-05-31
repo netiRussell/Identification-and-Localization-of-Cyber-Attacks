@@ -37,7 +37,13 @@ class CGCN(nn.Module):
         self.chebConv4 = ChebConv(u, u, Ks)
         self.gn4 = GraphNorm(u)
         self.dropout4 = nn.Dropout(dropout)
-
+        
+        """
+        self.chebConv5 = ChebConv(u, u, Ks)
+        self.gn5 = GraphNorm(u)
+        self.dropout5 = nn.Dropout(dropout)
+        """
+        
         self.dense = nn.Linear(u, 1) 
 
     def forward(self, x, edge_index, weights, batch):
@@ -71,9 +77,19 @@ class CGCN(nn.Module):
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv4")
         
+        """
+        x = self.chebConv5(x, edge_index, weights)
+        x = self.gn5(x)
+        x = F.relu(x)
+        x = self.dropout5(x)
+        #if torch.isnan(x).any() or torch.isinf(x).any():
+        #    raise RuntimeError("NaN/Inf in x → after chebConv4")
+        """
+        
         # Collapse nodes to a graph representation
         x = global_mean_pool(x, batch) # (batch_size, hidden)
         # Avoid NaN, inf
         x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
+
         return self.dense(x).squeeze(-1) # (batch_size,)
        

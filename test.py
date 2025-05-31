@@ -13,7 +13,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 # -- Load the saved state --
-checkpoint = torch.load('./saved_grads/checkpoint2025_05_123.pth.tar', weights_only=False)
+checkpoint = torch.load('./saved_grads/checkpoint2025_05_30.pth.tar', weights_only=False)
 config = checkpoint['config']
 
 # -- Prepare the dataset --
@@ -73,6 +73,7 @@ total   = len(test_loader)
 for batch in test_loader:
     batch = batch.to(device)
     logits = model(batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch)
+    logits = torch.sigmoid(logits)
     logits[0] = 1 if logits[0] > 0.5 else 0
     
     #preds  = logits.argmax(dim=1)

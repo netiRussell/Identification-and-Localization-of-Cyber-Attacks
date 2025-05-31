@@ -218,7 +218,7 @@ def validate(val_loader):
 # # # # # # # # # # # # # # # # # # #
 # ---- Training and validation ---- #
 # # # # # # # # # # # # # # # # # # #
-best_f1 = 0.0
+best_accur = 0.0
 patience_counter = 0
 start = time.time()
 accuracies_arr = []
@@ -237,10 +237,11 @@ for epoch in range(1, config["num_epochs"] + 1):
     
     scheduler.step(f1)
     elapsed = time.time() - start
-    print(f"Epoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
-    print(f"Accuracy={accuracy}")
+    print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
     print(f"DR={DR:.4f}, FA={FA:.4f}")
+    print(f"Accuracy={accuracy}")
+    print("----------------------------------------------------\n\n")
 
     # save checkpoint
     save_checkpoint({
@@ -258,12 +259,12 @@ for epoch in range(1, config["num_epochs"] + 1):
     })
 
     # early stopping on F1
-    if f1 > best_f1:
-        best_f1 = f1
+    if accuracy > best_accur:
+        best_accur = accuracy
         patience_counter = 0
     else:
         patience_counter += 1
         if patience_counter >= 16:
-            print("Early stopping: no F1 improvement for 10 epochs.")
+            print("Early stopping: no Accuracy improvement for 16 epochs.")
             break
 

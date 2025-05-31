@@ -126,10 +126,10 @@ def visualizeLossValid(fa, dr, f1, acc):
     Parameters:
     ----------
     fa: a NumPy array
-      An array that contains precision values from each epoch of the training
+      An array that contains fa values from each epoch of the training
       
     dr: a NumPy array
-      An array that contains recall values from each epoch of the training
+      An array that contains dr values from each epoch of the training
     
     f1: a NumPy array
       An array that contains F1 values from each epoch of the training
