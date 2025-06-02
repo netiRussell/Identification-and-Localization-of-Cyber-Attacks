@@ -3,6 +3,8 @@ import numpy as np
 # Implemented functions
 from functions import saveNetwork, loadDataset
 
+import sys
+
 # # # # # # # # # # # #
 # ---- Main code ---- #
 # # # # # # # # # # # #
@@ -33,7 +35,9 @@ for i in range(36000):
       # Apply the distribution-based attack on the marked buses
       X[mask, 0] = np.random.normal(np.mean(P), np.std(P), size=mask.sum())
       X[mask, 1] = np.random.normal(np.mean(Q), np.std(Q), size=mask.sum())
-      
+  
+  # Exclude Voltage magnitude and angle
+  X = X[:, :2]
 
   # Generate target (expected output)
   target = mask.astype(int)

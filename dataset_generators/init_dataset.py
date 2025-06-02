@@ -28,14 +28,20 @@ def singleCycle( net ):
     # -- Scale the load -- 
     df = net["load"]
     
-    # Generate an array of scale factors for all the elements
-    sf = np.random.uniform(0.8, 1.2, size=len(df))
+    # Scale factor
+    sf = np.random.uniform(0.8, 1.2)
 
     # Scale active power
     df["p_mw"] *= sf
 
     # Scale reactive power
     df["q_mvar"] *= sf
+    
+    # -- Scale the generator as well --
+    gen_df = net["gen"]
+    
+    # Scale active power
+    gen_df["p_mw"] *= sf
 
 
     # -- Run AC powerflow algorithm --

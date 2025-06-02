@@ -63,8 +63,13 @@ def loadDataset( i ):
   if(np.random.rand() <= 0.5):
     print("There will be an attack")
     
-    # Randomly pick number of buses to be attacked (up to 15)
-    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.16) * 2848)
+    # Randomly pick number of buses to be attacked
+    if(np.random.rand() <= 0.25):
+        # With a 25% chance, attack between 10-20% of the buses
+        num_buses_tobe_attacked = int(np.random.uniform(0.10, 0.20) * 2848)
+    else:
+        # With a 75% chance, attack between 3-10% of the buses
+        num_buses_tobe_attacked = int(np.random.uniform(0.03, 0.10) * 2848)
 
     # Load direct neighbors of each node
     neighbors = np.load("../init_dataset/neighbors.npy", allow_pickle = True).tolist()
@@ -143,7 +148,7 @@ def visualizeLossValid(fa, dr, f1, acc):
       None
     """
     # Create a figure with two subplots side by side
-    fig, (g1, g2, g3, g4) = plt.subplots(2, 2)
+    fig, ((g1, g2), (g3, g4)) = plt.subplots(2, 2)
     
     # First plot
     g1.plot(range(1,len(fa)+1), fa, label='FA')
