@@ -65,15 +65,19 @@ train_len = int(4/6 * len(dataset))
 val_len   = int(1/6 * len(dataset))
 test_len   = int(1/6 * len(dataset))
 
+# Randomly split the entire dataset into training, validation, and testing(not used in this file)
 train_dataset, val_dataset, _ = random_split(
     dataset,
     [train_len, val_len, test_len],
     generator=torch.Generator().manual_seed(123)  # for reproducibility
 )
 
+# Define loaders for each data subset to sequentially load batches
 train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
 val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
 
+# Get input features (Size of X in the first dimension)
+# Supposed to be 4 (P, Q, V, angle) or 2 (P, Q)
 in_feats = dataset[0].x.size(1)
 
 
@@ -82,6 +86,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.backends.cudnn.benchmark = True
 print(f"Device selected: {device}")
 
+# Define the model
 model = CGCN(
     in_channels=in_feats,
     u=32,
@@ -90,12 +95,16 @@ model = CGCN(
 #model = torch.compile(model, backend="aot_eager")
 model = model.to(device)
 
+# Define the criterion, optimizer, and scheduler
 #criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
 #use_cuda = (device.type == 'cuda')
 #scaler = GradScaler(enabled=use_cuda)
+
+# Scaler and Autocast 
+# (seems to have negative impact on the training; hence, turned off)
 use_cuda = False
 scaler = GradScaler(enabled=False)
 
@@ -103,28 +112,35 @@ scaler = GradScaler(enabled=False)
 
 # -- Training & evaluation functions --
 def train_epoch(epoch):
+    # Turn on the training mode to include features like GraphNorm normalization
     model.train()
+    
+    # Declare default value for loss and # of batches(steps) for grad accumulation
     total_loss = 0
     accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
-    optimizer.zero_grad()
     
-    grad_norms = []
+    # Reset accumulated grads
+    optimizer.zero_grad()
     
     for minibatch_id, minibatch in enumerate(train_loader):
         minibatch = minibatch.to(device)
         
-        with autocast(device_type=device.type, enabled=use_cuda): 
-            y_dense, mask = to_dense_batch(minibatch.y, minibatch.batch)
+        with autocast(device_type=device.type, enabled=use_cuda):
+            # Get target for a batch
+            y_dense, _ = to_dense_batch(minibatch.y, minibatch.batch)
             target = (y_dense.sum(dim=1) > 0).float()
             
+            # Get model's raw output (logits)
             logits = model(minibatch.x, minibatch.edge_index, weights=minibatch.edge_attr, batch=minibatch.batch)    # [total_nodes, 2]
             
+            # Compute loss and save it 
             loss   = criterion(logits, target)
             total_loss += loss.item()
 
-        # Scale down the loss so grads are averaged over accum_steps
+        # Scale down the loss so that the grads are averaged over accum_steps
         scaler.scale(loss / accum_steps).backward()
         
+        # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
         if (minibatch_id+1) % accum_steps == 0:
             print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
             scaler.step(optimizer)
@@ -141,19 +157,19 @@ def train_epoch(epoch):
 
 
 def validate(val_loader):
+    # Turn on the evaluation mode to exclude features like dropout regularizatiion
     model.eval()
+    
+    # Declare arrays where the predictions and corresponding targets(labels) will be stored
     all_preds = []
     all_targets = []
-    
-    all_f1 = []
-    all_fa = []
-    all_dr = []
 
+    # Make sure grads of the model won't be affected
     with torch.no_grad():
         for batch in val_loader:
             batch = batch.to(device)
 
-            # Get logits
+            # Get model's raw output(logits)
             logits = model(
                 batch.x,
                 batch.edge_index,
@@ -214,6 +230,8 @@ def validate(val_loader):
 # # # # # # # # # # # # # # # # # # #
 # ---- Training and validation ---- #
 # # # # # # # # # # # # # # # # # # #
+
+# Declaration of global variables
 best_f1 = 0.0
 patience_counter = 0
 start = time.time()
@@ -223,22 +241,29 @@ rec_arr = []
 fa_arr = []
 
 for epoch in range(1, config["num_epochs"] + 1):
+    # Conduct a training for a single epoch
     train_loss = train_epoch(epoch)
     
+    # Conduct a validation for a single epoch
     prec, rec, f1, accuracy, FA = validate(val_loader)
+    # Append all the metrics from the validation
     accuracies_arr.append(accuracy)
     f1_arr.append(f1)
     rec_arr.append(rec)
     fa_arr.append(FA)
     
+    # Update sheduler to decrease learning rate in case f1 doesn't improve
     scheduler.step(f1)
+    
+    # Check how much time have passed since the beginning of the model training
+    # and print out the information of the epoch
     elapsed = time.time() - start
     print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
     print(f"FA={FA:.4f}, Accuracy={accuracy}")
     print("----------------------------------------------------\n\n")
 
-    # save checkpoint
+    # Save checkpoint
     save_checkpoint({
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
@@ -252,7 +277,7 @@ for epoch in range(1, config["num_epochs"] + 1):
         'fa': fa_arr
     })
 
-    # early stopping on F1
+    # Early stopping if f1 doesn't improve 16 epochs in a row
     if f1 > best_f1:
         best_f1 = f1
         patience_counter = 0
