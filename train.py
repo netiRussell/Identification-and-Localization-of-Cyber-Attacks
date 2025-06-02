@@ -72,6 +72,7 @@ train_dataset, val_dataset, _ = random_split(
     generator=torch.Generator().manual_seed(123)  # for reproducibility
 )
 
+
 # Define loaders for each data subset to sequentially load batches
 train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
 val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)

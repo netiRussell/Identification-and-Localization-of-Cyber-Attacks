@@ -10,7 +10,6 @@ import sys
 # # # # # # # # # # # #
 
 for i in range(36000):
-    
   print(f"\nCurrent cycle: #{i}")
   
   # Load a node features and a mask with the buses to be attacked

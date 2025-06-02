@@ -3,6 +3,8 @@ import os
 import torch
 from datetime import datetime
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+import joblib
 
 # TODO: To be deleted
 import sys
@@ -63,13 +65,8 @@ def loadDataset( i ):
   if(np.random.rand() <= 0.5):
     print("There will be an attack")
     
-    # Randomly pick number of buses to be attacked
-    if(np.random.rand() <= 0.25):
-        # With a 25% chance, attack between 10-20% of the buses
-        num_buses_tobe_attacked = int(np.random.uniform(0.10, 0.20) * 2848)
-    else:
-        # With a 75% chance, attack between 3-10% of the buses
-        num_buses_tobe_attacked = int(np.random.uniform(0.03, 0.10) * 2848)
+    # Randomly pick number of buses to be attacked between 5-10% of the buses
+    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.10) * 2848)
 
     # Load direct neighbors of each node
     neighbors = np.load("../init_dataset/neighbors.npy", allow_pickle = True).tolist()
@@ -181,6 +178,60 @@ def visualizeLossValid(fa, dr, f1, acc):
     # Adjust layout and show the plot
     plt.tight_layout()
     plt.show()
+    
+
+def generateDatasetStandardScaler( indices ):
+    """
+    Generates data scaler and saves it on a disk to be utilized in __getitem__
+    
+
+    Parameters:
+    ----------
+    indices: a Python list
+        List of sample indices that will be used in the training set
+
+      
+    Returns:
+    -------
+      None
+      
+    Comments:
+    -------
+    To use, in dataset.py, in init function, add:
+        # Load the fitted StandardScaler:
+        scaler = joblib.load("train_scaler.joblib")
+        
+        # Save mean and scale from the scaler as model's parameters
+        # scaler.mean_ has a shape of (num_node_feats,), i.e. (P,Q or P,Q,V,angle)
+        # scaler.scale_ has a shape of (num_node_feats,), i.e. (2 or 4)
+        self.register_buffer("mean_", torch.tensor(scaler.mean_, dtype=torch.float))
+        self.register_buffer("scale_", torch.tensor(scaler.scale_, dtype=torch.float))
+    Then, in __getitem__, add:
+        # Apply Standard scaling
+        x = (x - self.mean_) / self.scale_
+        
+    """
+    print("Dataset Standard scaler generation is in progres...")
+    
+    # x_i.npy has shape (2848, num_feats),
+    # The 2D array to be accumulated (num_train * 2848, num_feats).
+    all_nodes = []   
+    for i in indices:
+        Xi = np.load(f"./dataset/x_{i}.npy")   # shape=(2848,2 or 4)
+        all_nodes.append(Xi)
+        
+    # Stack into shape (num_train, 2848, 2 or 4):
+    all_nodes = np.stack(all_nodes, axis=0)
+    
+    # Reshape to (num_train * 2848, 2 or 4):
+    ntot = all_nodes.shape[0] * all_nodes.shape[1]
+    all_nodes = all_nodes.reshape(ntot, all_nodes.shape[2])
+    
+    # Fit the scaler on these flattened features:
+    scaler = StandardScaler().fit(all_nodes)  
+    
+    # Save the scaler to disk (you can also just save mean_/scale_ arrays):
+    joblib.dump(scaler, "train_scaler.joblib")
 
 
 # # # # # # # # # # # # # # # #
