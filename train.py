@@ -72,7 +72,7 @@ train_dataset, val_dataset, _ = random_split(
 )
 
 train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-val_loader   = DataLoader(val_dataset,   batch_size=config["batch_size"])
+val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
 
 in_feats = dataset[0].x.size(1)
 
@@ -127,38 +127,12 @@ def train_epoch(epoch):
         
         if (minibatch_id+1) % accum_steps == 0:
             print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
-            
-            # TODO: check if clipping helps. Find the best threshold value:
-            # Unscale so p.grad is the true gradient
-            scaler.unscale_(optimizer)
-            
-            # Find average gradient
-            total_grad = 0.0
-            for p in model.parameters():
-                if p.grad is not None:
-                    # L2 norm of this param’s gradient
-                    param_norm = p.grad.data.norm(2)
-                    total_grad += param_norm.item() ** 2
-            total_grad = total_grad ** 0.5
-            grad_norms.append(total_grad)
-            
-            # Clip gradients to avoid overflow (NaN, inf)
-            clip_grad_norm_(model.parameters(), 1.0)
-            
-            
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
     
     # Extra gradient step to make sure there are no leftovers
     print(f"Epoch#{epoch}, Last batch")
-    
-    norms = np.array(grad_norms)
-    print(f"Gradient 85th percentile: {np.percentile(norms, 85)}")
-    print(f"Gradient 90th percentile: {np.percentile(norms, 90)}")
-    # ! max_norm = percentile*1.1
-
-    clip_grad_norm_(model.parameters(), 1.0)
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad()
@@ -170,77 +144,98 @@ def validate(val_loader):
     model.eval()
     all_preds = []
     all_targets = []
+    
+    all_f1 = []
+    all_fa = []
+    all_dr = []
 
     with torch.no_grad():
         for batch in val_loader:
             batch = batch.to(device)
 
-            # 1) model forward → one logit per graph
+            # Get logits
             logits = model(
                 batch.x,
                 batch.edge_index,
                 batch.edge_attr,
                 batch.batch
             )                           # shape: [batch_size]
+            
+            # Apply activation function on the logits to get probability
+            prob = torch.sigmoid(logits)
+            
+            # Convert probability into a classification
+            graph_pred = 1 if prob > 0.5 else 0
+            
+            # Get target
+            graph_target = torch.max(batch.y).item()
+            
+            # Append current outputs
+            all_preds.append(graph_pred)
+            all_targets.append(graph_target)
+            
+            """
+            # TODO: to be finished for ARMA training
+            # Get metrics
+            if(graph_target == 0):
+                # No attack case written explicitly (to avoid div by 0)
+                if(graph_pred == 0):
+                    # Prediction is correct
+                    all_f1.append(1)
+                    all_fa.append(0)
+                    all_dr.append(1)
+                else:
+                    # Prediction isn't correct
+                    all_f1.append(0)
+                    all_fa.append(1)
+                    all_dr.append(0)      
+            else:
+            """
+        
 
-            # 2) collapse node labels → [batch_size] float tensor
-            y_dense, mask      = to_dense_batch(batch.y.float(), batch.batch)
-            graph_targets      = (y_dense.sum(dim=1) > 0).long().cpu()
-
-            # 3) logits → probs → binary preds
-            probs      = torch.sigmoid(logits)
-            graph_preds = (probs > 0.5).long().cpu()
-
-            all_preds.append(graph_preds)
-            all_targets.append(graph_targets)
-
-    # 4) concatenate across batches
-    all_preds   = torch.cat(all_preds).numpy()
-    all_targets = torch.cat(all_targets).numpy()
-
-    # 5) compute TP, FN, FP, TN
-    TP = np.logical_and(all_preds == 1, all_targets == 1).sum()
-    FN = np.logical_and(all_preds == 0, all_targets == 1).sum()
-    FP = np.logical_and(all_preds == 1, all_targets == 0).sum()
-    TN = np.logical_and(all_preds == 0, all_targets == 0).sum()
-
-    # 6) metrics
-    precision = precision_score(all_targets, all_preds, zero_division=0)
-    recall    = recall_score(all_targets, all_preds, zero_division=0)
-    f1        = f1_score(all_targets, all_preds, zero_division=0)
-    accuracy  = (all_preds == all_targets).mean() * 100
-    DR        = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-    FA        = FP / (FP + TN) if (FP + TN) > 0 else 0.0
+        # Concatenate across batches
+        all_preds   = np.asarray(all_preds)
+        all_targets = np.asarray(all_targets)
     
-    return precision, recall, f1, accuracy, DR, FA
+        # Compute TP, FN, FP, TN
+        FP = np.logical_and(all_preds == 1, all_targets == 0).sum()
+        TN = np.logical_and(all_preds == 0, all_targets == 0).sum()
+    
+        # Metrics
+        precision = precision_score(all_targets, all_preds, zero_division=0)
+        recall    = recall_score(all_targets, all_preds, zero_division=0)
+        accuracy  = (all_preds == all_targets).mean() * 100
+        f1        = f1_score(all_targets, all_preds, zero_division=0)
+        FA        = FP / (FP + TN) if (FP + TN) > 0 else 0.0
+        
+        return precision, recall, f1, accuracy, FA
 
 
 # # # # # # # # # # # # # # # # # # #
 # ---- Training and validation ---- #
 # # # # # # # # # # # # # # # # # # #
-best_accur = 0.0
+best_f1 = 0.0
 patience_counter = 0
 start = time.time()
 accuracies_arr = []
 f1_arr = []
-dr_arr = []
+rec_arr = []
 fa_arr = []
 
 for epoch in range(1, config["num_epochs"] + 1):
     train_loss = train_epoch(epoch)
     
-    prec, rec, f1, accuracy, DR, FA = validate(val_loader)
+    prec, rec, f1, accuracy, FA = validate(val_loader)
     accuracies_arr.append(accuracy)
     f1_arr.append(f1)
-    dr_arr.append(DR)
+    rec_arr.append(rec)
     fa_arr.append(FA)
     
     scheduler.step(f1)
     elapsed = time.time() - start
     print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
-    print(f"DR={DR:.4f}, FA={FA:.4f}")
-    print(f"Accuracy={accuracy}")
+    print(f"FA={FA:.4f}, Accuracy={accuracy}")
     print("----------------------------------------------------\n\n")
 
     # save checkpoint
@@ -252,15 +247,14 @@ for epoch in range(1, config["num_epochs"] + 1):
         'trainingTime': time.time() - start,
         'accuracies': np.array(accuracies_arr),
         'prec': prec,
-        'rec': rec,
+        'rec': rec_arr,
         'f1': f1_arr,
-        'dr': dr_arr,
         'fa': fa_arr
     })
 
     # early stopping on F1
-    if accuracy > best_accur:
-        best_accur = accuracy
+    if f1 > best_f1:
+        best_f1 = f1
         patience_counter = 0
     else:
         patience_counter += 1
