@@ -92,4 +92,3 @@ class CGCN(nn.Module):
         x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
 
         return self.dense(x).squeeze(-1) # (batch_size,)
-       
