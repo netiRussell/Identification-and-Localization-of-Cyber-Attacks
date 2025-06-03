@@ -34,7 +34,7 @@ def saveNetwork( X, target, i):
 
 
 
-def loadDataset( i ):
+def loadDataset( i, attack=False ):
   """
   Loads the network and randomly decides if the network will be attacked.
   Then, creates a boolean mask to attack random buses
@@ -44,6 +44,9 @@ def loadDataset( i ):
   ----------
   i: Integer
     Current iteration (i from 0 to 36000)
+    
+  attack: Boolean
+      Boolean that represents whether this sample will be attacked
   
 
   Returns:
@@ -57,12 +60,11 @@ def loadDataset( i ):
   # X = Node features array
   X = np.load(f"../init_dataset/x{i}.npy")
 
-  # With a 40% chance (60% chance the network won't experience any attack),
-  # create a boolean mask to randomly attack up to 15 connected buses
+  # Declare and Define with default values mask and num of buses to be attacked
   num_buses_tobe_attacked = 0
   mask = np.full(2848, False, dtype="bool")
 
-  if(np.random.rand() <= 0.5):
+  if(attack == True):
     print("There will be an attack")
     
     # Randomly pick number of buses to be attacked between 5-10% of the buses

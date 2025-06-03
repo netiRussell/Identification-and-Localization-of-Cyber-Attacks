@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
+import random
 
 from model.CGCN import CGCN
 from model.ARMA_Transformer import GNNArmaTransformer
@@ -45,6 +46,21 @@ config = {
               "lr": 1e-3, 
               "weight_decay": 1e-5,
               
+              "total_num_of_samples": 36000,
+              "Ad_start": 0,
+              "Ad_end": 9000,
+              "As_start": 9000,
+              "As_end": 18000,
+              "Ad_train": 6000,
+              "As_train": 6000,
+              "Ad_val": 1500,
+              "As_val": 1500,
+              "Ad_test": 1500,
+              "As_test": 1500,
+              "norm_train": 12000,
+              "norm_val": 3000,
+              "norm_test": 3000,
+              
               "hidden_channels": 128,
               "out_channels": 256,
               "num_stacks": 4, 
@@ -58,19 +74,50 @@ config = {
 
 
 # --- Prepare the dataset ---
-dataset = FDIADataset(config["dataset_root"])
+
+# Definition of the lists containing indices of Ad ans As samples
+Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
+As_indices = list(range(config["As_start"], config["As_end"]))
+
+# Definition of the list containing indices of not attacked(normal) samples
+normal_indices = list(range(int(config["total_num_of_samples"]/2), config["total_num_of_samples"]))
 
 # 4/6 1/6 1/6 split
-train_len = int(4/6 * len(dataset))
-val_len   = int(1/6 * len(dataset))
-test_len   = int(1/6 * len(dataset))
+train_len = int(4/6 * config["total_num_of_samples"])
+val_len   = int(1/6 * config["total_num_of_samples"]) + train_len
+#test_len   = int(1/6 * config["total_num_of_samples"]) + train_len + val_len
 
-# Randomly split the entire dataset into training, validation, and testing(not used in this file)
-train_dataset, val_dataset, _ = random_split(
-    dataset,
-    [train_len, val_len, test_len],
-    generator=torch.Generator().manual_seed(123)  # for reproducibility
-)
+# Get training indices: 6k of Ad + 6k of As + 12k of norm = 4/6 of 36k samples or 24k samples total
+train_indices = Ad_indices[:config["Ad_train"]] + As_indices[:config["As_train"]] + normal_indices[:config["norm_train"]]
+
+# Get validation indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
+val_indices = (Ad_indices[config["Ad_train"]:config["Ad_train"]+config["Ad_val"]] + 
+               As_indices[config["As_train"]:config["As_train"]+config["As_val"]] + 
+               normal_indices[config["norm_train"]:config["norm_train"]+config["norm_val"]])
+
+# Get test indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
+test_indices = (Ad_indices[config["Ad_train"]+config["Ad_val"]:] + 
+               As_indices[config["As_train"]+config["As_val"]:] + 
+               normal_indices[config["norm_train"]+config["norm_val"]:])
+
+# Print the arrays
+print("Train indices:", train_indices)
+print("Validation indices:", val_indices)
+print("Test indices:", test_indices)
+
+# Print their sizes
+print("Train size:", len(train_indices))
+print("Validation size:", len(val_indices))
+print("Test size:", len(test_indices))
+sys.exit()
+
+# Randomize the indices to mix attacked and normal samples
+random.seed(123) # for reproducibility
+random.shuffle(train_indices)
+random.shuffle(normal_indices)
+
+train_dataset = FDIADataset(train_indices, config["dataset_root"])
+val_dataset = FDIADataset(train_indices, config["dataset_root"])
 
 
 # Define loaders for each data subset to sequentially load batches
@@ -79,7 +126,7 @@ val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
 
 # Get input features (Size of X in the first dimension)
 # Supposed to be 4 (P, Q, V, angle) or 2 (P, Q)
-in_feats = dataset[0].x.size(1)
+in_feats = train_dataset[0].x.size(1)
 
 
 # -- Instantiate model, loss, optimizer, scheduler --
