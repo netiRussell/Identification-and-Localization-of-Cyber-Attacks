@@ -3,6 +3,8 @@ import os
 import torch
 from datetime import datetime
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+import joblib
 
 # TODO: To be deleted
 import sys
@@ -32,7 +34,7 @@ def saveNetwork( X, target, i):
 
 
 
-def loadDataset( i ):
+def loadDataset( i, attack=False ):
   """
   Loads the network and randomly decides if the network will be attacked.
   Then, creates a boolean mask to attack random buses
@@ -42,6 +44,9 @@ def loadDataset( i ):
   ----------
   i: Integer
     Current iteration (i from 0 to 36000)
+    
+  attack: Boolean
+      Boolean that represents whether this sample will be attacked
   
 
   Returns:
@@ -55,16 +60,15 @@ def loadDataset( i ):
   # X = Node features array
   X = np.load(f"../init_dataset/x{i}.npy")
 
-  # With a 40% chance (60% chance the network won't experience any attack),
-  # create a boolean mask to randomly attack up to 15 connected buses
+  # Declare and Define with default values mask and num of buses to be attacked
   num_buses_tobe_attacked = 0
   mask = np.full(2848, False, dtype="bool")
 
-  if(np.random.rand() <= 0.5):
+  if(attack == True):
     print("There will be an attack")
     
-    # Randomly pick number of buses to be attacked (up to 15)
-    num_buses_tobe_attacked = np.random.randint(1, 16)
+    # Randomly pick number of buses to be attacked between 5-10% of the buses
+    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.10) * 2848)
 
     # Load direct neighbors of each node
     neighbors = np.load("../init_dataset/neighbors.npy", allow_pickle = True).tolist()
@@ -118,18 +122,18 @@ def save_checkpoint(state, path='./saved_grads/'):
 
 
 
-def visualizeLossValid(prec, rec, f1, acc):
+def visualizeLossValid(fa, dr, f1, acc):
     """
     Visualizes precision, recall, f1, and accuracy collected during the training
     
 
     Parameters:
     ----------
-    prec: a NumPy array
-      An array that contains precision values from each epoch of the training
+    fa: a NumPy array
+      An array that contains fa values from each epoch of the training
       
-    rec: a NumPy array
-      An array that contains recall values from each epoch of the training
+    dr: a NumPy array
+      An array that contains dr values from each epoch of the training
     
     f1: a NumPy array
       An array that contains F1 values from each epoch of the training
@@ -143,20 +147,20 @@ def visualizeLossValid(prec, rec, f1, acc):
       None
     """
     # Create a figure with two subplots side by side
-    fig, (g1, g2, g3, g4) = plt.subplots(2, 2)
+    fig, ((g1, g2), (g3, g4)) = plt.subplots(2, 2)
     
     # First plot
-    g1.plot(range(1,len(prec)+1), prec, label='Precision')
-    g1.set_title('Precision over epoch')
+    g1.plot(range(1,len(fa)+1), fa, label='FA')
+    g1.set_title('FA over epoch')
     g1.set_xlabel('Epoch #')
-    g1.set_ylabel('Precision')
+    g1.set_ylabel('FA')
     g1.legend()
     
     # Second plot
-    g2.plot(range(1, len(rec)+1), rec, label='Recall')
-    g2.set_title('Recall over epoch')
+    g2.plot(range(1, len(dr)+1), dr, label='DR')
+    g2.set_title('DR over epoch')
     g2.set_xlabel('Epoch #')
-    g2.set_ylabel('Recall')
+    g2.set_ylabel('DR')
     g2.legend()
     
     # Third plot
@@ -176,6 +180,60 @@ def visualizeLossValid(prec, rec, f1, acc):
     # Adjust layout and show the plot
     plt.tight_layout()
     plt.show()
+    
+
+def generateDatasetStandardScaler( indices ):
+    """
+    Generates data scaler and saves it on a disk to be utilized in __getitem__
+    
+
+    Parameters:
+    ----------
+    indices: a Python list
+        List of sample indices that will be used in the training set
+
+      
+    Returns:
+    -------
+      None
+      
+    Comments:
+    -------
+    To use, in dataset.py, in init function, add:
+        # Load the fitted StandardScaler:
+        scaler = joblib.load("train_scaler.joblib")
+        
+        # Save mean and scale from the scaler as model's parameters
+        # scaler.mean_ has a shape of (num_node_feats,), i.e. (P,Q or P,Q,V,angle)
+        # scaler.scale_ has a shape of (num_node_feats,), i.e. (2 or 4)
+        self.register_buffer("mean_", torch.tensor(scaler.mean_, dtype=torch.float))
+        self.register_buffer("scale_", torch.tensor(scaler.scale_, dtype=torch.float))
+    Then, in __getitem__, add:
+        # Apply Standard scaling
+        x = (x - self.mean_) / self.scale_
+        
+    """
+    print("Dataset Standard scaler generation is in progres...")
+    
+    # x_i.npy has shape (2848, num_feats),
+    # The 2D array to be accumulated (num_train * 2848, num_feats).
+    all_nodes = []   
+    for i in indices:
+        Xi = np.load(f"./dataset/x_{i}.npy")   # shape=(2848,2 or 4)
+        all_nodes.append(Xi)
+        
+    # Stack into shape (num_train, 2848, 2 or 4):
+    all_nodes = np.stack(all_nodes, axis=0)
+    
+    # Reshape to (num_train * 2848, 2 or 4):
+    ntot = all_nodes.shape[0] * all_nodes.shape[1]
+    all_nodes = all_nodes.reshape(ntot, all_nodes.shape[2])
+    
+    # Fit the scaler on these flattened features:
+    scaler = StandardScaler().fit(all_nodes)  
+    
+    # Save the scaler to disk (you can also just save mean_/scale_ arrays):
+    joblib.dump(scaler, "train_scaler.joblib")
 
 
 # # # # # # # # # # # # # # # #
@@ -203,5 +261,5 @@ def _bfs(root, k, neighbors):
         if len(out) >= k:
             break
         
-
+  print(f"# of buses attacked: {len(out)}")
   return out

@@ -4,9 +4,12 @@ import torch
 from torch_geometric.data import Data
 
 class FDIADataset(torch.utils.data.Dataset):
-    def __init__(self, root_dir):
+    def __init__(self, indices, root_dir):
         # Folder where the dataset is stored at
         self.root = root_dir
+        
+        # Corresponding X_{i}.npy files
+        self.indices = indices
         
         # Save repetitive components just once
         # edge_index: shape [2, num_edges]
@@ -15,19 +18,24 @@ class FDIADataset(torch.utils.data.Dataset):
         
         # edge weights (impedances): shape [num_edges]
         w = np.load(os.path.join(self.root, "weights.npy"), mmap_mode='r')
+        
         # turn into shape [num_edges, 1] so it can be Data.edge_attr
         self.edge_attr = torch.tensor(w, dtype=torch.float).unsqueeze(-1)
         
 
     def __len__(self):
-        return 36000
+        return len(self.indices)
 
     def __getitem__(self, idx):
-        # node features: shape [2848, num_node_feats]
-        x = torch.tensor(np.load(os.path.join(self.root, f"x_{idx}.npy")),
+        # Get the real index of the sample selected
+        i = self.indices[idx]
+        
+        # Retreive the nodes
+        x = torch.tensor(np.load(os.path.join(self.root, f"x_{i}.npy")),
                          dtype=torch.float)
         
+        
         # labels: 0/1 per–node target array of shape [2848]
-        y = torch.tensor(np.load(os.path.join(self.root, f"target_{idx}.npy")),
+        y = torch.tensor(np.load(os.path.join(self.root, f"target_{i}.npy")),
                          dtype=torch.long)
         return Data(x=x, edge_index=self.edge_index, edge_attr=self.edge_attr, y=y)
