@@ -17,18 +17,23 @@ checkpoint = torch.load('./saved_grads/checkpoint2025_06_02.pth.tar', weights_on
 config = checkpoint['config']
 
 # -- Prepare the dataset --
-dataset = FDIADataset(config["dataset_root"])
+# Definition of the lists containing indices of Ad ans As samples
+Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
+As_indices = list(range(config["As_start"], config["As_end"]))
+
+# Definition of the list containing indices of not attacked(normal) samples
+normal_indices = list(range(int(config["total_num_of_samples"]/2), config["total_num_of_samples"]))
 
 # 4/6 1/6 1/6 split
-train_len = int(4/6 * len(dataset))
-val_len   = int(1/6 * len(dataset))
-test_len   = int(1/6 * len(dataset))
+train_len = int(4/6 * config["total_num_of_samples"])
+val_len   = int(1/6 * config["total_num_of_samples"]) + train_len
 
-_, _, test_dataset = random_split(
-    dataset,
-    [train_len, val_len, test_len],
-    generator=torch.Generator().manual_seed(123)  # for reproducibility
-)
+# Get test indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
+test_indices = (Ad_indices[config["Ad_train"]+config["Ad_val"]:] + 
+               As_indices[config["As_train"]+config["As_val"]:] + 
+               normal_indices[config["norm_train"]+config["norm_val"]:])
+
+dataset = FDIADataset(test_indices, config["dataset_root"])
 
 
 # -- Instantiate model --

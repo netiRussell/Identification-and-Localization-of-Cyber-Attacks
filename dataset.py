@@ -24,7 +24,7 @@ class FDIADataset(torch.utils.data.Dataset):
         
 
     def __len__(self):
-        return 36000
+        return len(self.indices)
 
     def __getitem__(self, idx):
         # Get the real index of the sample selected
@@ -33,14 +33,6 @@ class FDIADataset(torch.utils.data.Dataset):
         # Retreive the nodes
         x = torch.tensor(np.load(os.path.join(self.root, f"x_{i}.npy")),
                          dtype=torch.float)
-        
-        # Get a range of min and max values
-        min_vals = x.min(dim=0).values
-        max_vals = x.max(dim=0).values
-        range_vals = (max_vals - min_vals).clamp(min=1e-8)
-        
-        # Apply normal scaling [0,1]
-        x = (x - min_vals) / range_vals
         
         
         # labels: 0/1 per–node target array of shape [2848]

@@ -4,6 +4,7 @@ import numpy as np
 from functions import saveNetwork, loadDataset
 
 import sys
+import torch
 
 # # # # # # # # # # # #
 # ---- Main code ---- #
@@ -29,6 +30,14 @@ for i in range(9000):
   
   # Exclude Voltage magnitude and angle
   X = X[:, :2]
+  
+  # Normalize the sample:
+  # Get a range of min and max values
+  min_vals = np.min(X, axis=0)
+  max_vals = np.max(X, axis=0)
+  range_vals = np.clip(max_vals - min_vals, a_min=1e-8, a_max=None)
+  # Apply normal scaling [0,1]
+  X = (X - min_vals) / range_vals
 
   # Generate target (expected output)
   target = mask.astype(int)
@@ -52,6 +61,14 @@ for i in range(9000, 18000):
   
   # Exclude Voltage magnitude and angle
   X = X[:, :2]
+  
+  # Normalize the sample:
+  # Get a range of min and max values
+  min_vals = np.min(X, axis=0)
+  max_vals = np.max(X, axis=0)
+  range_vals = np.clip(max_vals - min_vals, a_min=1e-8, a_max=None)
+  # Apply normal scaling [0,1]
+  X = (X - min_vals) / range_vals
 
   # Generate target (expected output)
   target = mask.astype(int)
@@ -68,6 +85,14 @@ for i in range(18000, 36000):
   
   # Exclude Voltage magnitude and angle
   X = X[:, :2]
+  
+  # Normalize the sample:
+  # Get a range of min and max values
+  min_vals = np.min(X, axis=0)
+  max_vals = np.max(X, axis=0)
+  range_vals = np.clip(max_vals - min_vals, a_min=1e-8, a_max=None)
+  # Apply normal scaling [0,1]
+  X = (X - min_vals) / range_vals
 
   # Generate target (expected output)
   target = mask.astype(int)
