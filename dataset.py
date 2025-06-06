@@ -2,7 +2,16 @@ import os
 import numpy as np
 import torch
 from torch_geometric.data import Data
+import random
 
+# Enable reproducibility
+torch.backends.cudnn.deterministic = True
+random.seed(123)
+torch.manual_seed(123)
+torch.cuda.manual_seed(123)
+np.random.seed(123)
+
+# The PyG dataset class
 class FDIADataset(torch.utils.data.Dataset):
     def __init__(self, indices, root_dir):
         # Folder where the dataset is stored at

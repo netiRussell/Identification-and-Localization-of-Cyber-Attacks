@@ -4,8 +4,7 @@ import torch.optim as optim
 from torch_geometric.loader import DataLoader
 import random
 
-from model.CGCN import CGCN
-from model.ARMA_Transformer import GNNArmaTransformer
+from model.ARMA import GNNArma
 
 from torch.utils.data import random_split
 from torch.amp import autocast, GradScaler
@@ -27,6 +26,13 @@ import sys
 # -- Clear cache from the previous training --
 torch.cuda.empty_cache()
 gc.collect()
+
+# -- Enable reproducibility --
+torch.backends.cudnn.deterministic = True
+random.seed(123)
+torch.manual_seed(123)
+torch.cuda.manual_seed(123)
+np.random.seed(123)
 
 '''
 Questions:
@@ -61,10 +67,11 @@ config = {
               "norm_val": 3000,
               "norm_test": 3000,
               
-              "hidden_channels": 128,
-              "out_channels": 256,
-              "num_stacks": 4, 
+              "in_channels": 2,
+              "hidden_channels": 32,
+              "num_stacks": 3, 
               "num_layers": 5,
+              "dropout": 0.1, 
               
               "transformer_layers": 6,
               "transformer_heads": 8
@@ -95,13 +102,6 @@ val_indices = (Ad_indices[config["Ad_train"]:config["Ad_train"]+config["Ad_val"]
                As_indices[config["As_train"]:config["As_train"]+config["As_val"]] + 
                normal_indices[config["norm_train"]:config["norm_train"]+config["norm_val"]])
 
-# Enable reproducibility
-torch.backends.cudnn.deterministic = True
-random.seed(123)
-torch.manual_seed(123)
-torch.cuda.manual_seed(123)
-np.random.seed(123)
-
 # Mix attacks and normal indices within the subsets
 random.shuffle(train_indices)
 random.shuffle(val_indices)
@@ -126,10 +126,12 @@ torch.backends.cudnn.benchmark = True
 print(f"Device selected: {device}")
 
 # Define the model
-model = CGCN(
-    in_channels=in_feats,
-    u=32,
-    Ks=5    
+model = GNNArma(
+    in_channels=config["in_channels"], 
+    hidden_channels=config["hidden_channels"],
+    num_stacks=config["num_stacks"],
+    num_layers=config["num_layers"], 
+    dropout=config["dropout"]  
 )
 #model = torch.compile(model, backend="aot_eager")
 model = model.to(device)
@@ -170,13 +172,14 @@ def train_epoch(epoch):
             target = (y_dense.sum(dim=1) > 0).float()
             
             # Get model's raw output (logits)
-            logits = model(minibatch.x, 
+            logits_nodes, logits_graph = model(minibatch.x, 
                            minibatch.edge_index, 
                            weights=minibatch.edge_attr, 
                            batch=minibatch.batch)
             
             # Compute loss and save it 
-            loss   = criterion(logits, target)
+            loss = criterion(logits_nodes, target_nodes)
+            loss += criterion(logits_graph, target_graph)
             total_loss += loss.item()
 
         # Scale down the loss so that the grads are averaged over accum_steps
@@ -215,25 +218,39 @@ def validate(val_loader):
             batch = batch.to(device)
 
             # Get model's raw output(logits)
-            logits = model(
+            logits_nodes, logits_graph = model(
                 batch.x,
                 batch.edge_index,
                 batch.edge_attr,
                 batch.batch
             )
             
-            # Get target
-            target = torch.max(batch.y).unsqueeze(0).float()
+            # Get node-level target
+            target_nodes = torch.max(batch.y[0]).unsqueeze(0).float()
+            
+            # Get graph-level target
+            target_graph = torch.max(batch.y[0]).unsqueeze(0).float()
             
             # Compute loss
-            loss = criterion(logits, target)
+            loss = criterion(logits_nodes, target_nodes)
+            loss += criterion(logits_graph, target_graph)
             total_loss += loss.item()
             
-            # Apply activation function on the logits to get probability
-            prob = torch.sigmoid(logits)
+            # Apply activation function on the logits to get node-level probability
+            prob_nodes = torch.sigmoid(logits)
             
             # Convert probability into a classification
-            pred = 1 if prob > 0.5 else 0
+            pred_nodes = 1 if prob > 0.5 else 0
+            
+            # Get graph-level classification:
+            graph_pred = (logits_graph > 0).long()
+            
+            # Append values to metrices
+            if(graph_pred == 0):
+                # No attack case
+            else:
+                # Attack took place case
+            
             
             
             # Append current outputs
@@ -282,7 +299,7 @@ def validate(val_loader):
 # # # # # # # # # # # # # # # # # # #
 
 # Declaration of global variables
-best_loss = 0.0
+best_loss = 99.99
 patience_counter = 0
 start = time.time()
 accuracies_arr = []
@@ -334,6 +351,6 @@ for epoch in range(1, config["num_epochs"] + 1):
     else:
         patience_counter += 1
         if patience_counter >= 16:
-            print("Early stopping: no Accuracy improvement for 16 epochs.")
+            print(f"Early stopping: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
             break
 

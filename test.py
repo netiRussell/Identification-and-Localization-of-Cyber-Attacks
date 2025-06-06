@@ -2,6 +2,8 @@ import torch
 from torch_geometric.loader import DataLoader
 from model.CGCN import CGCN
 from torch.utils.data import random_split
+import random
+import numpy as np
 
 from dataset import FDIADataset
 from dataset_generators.functions import visualizeLossValid
@@ -13,10 +15,17 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 # -- Load the saved state --
-checkpoint = torch.load('./saved_grads/checkpoint2025_06_02.pth.tar', weights_only=False)
+checkpoint = torch.load('./saved_grads/checkpoint2025_06_03.pth.tar', weights_only=False)
 config = checkpoint['config']
 
 # -- Prepare the dataset --
+# Enable reproducibility
+torch.backends.cudnn.deterministic = True
+random.seed(123)
+torch.manual_seed(123)
+torch.cuda.manual_seed(123)
+np.random.seed(123)
+
 # Definition of the lists containing indices of Ad ans As samples
 Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
 As_indices = list(range(config["As_start"], config["As_end"]))
@@ -33,7 +42,11 @@ test_indices = (Ad_indices[config["Ad_train"]+config["Ad_val"]:] +
                As_indices[config["As_train"]+config["As_val"]:] + 
                normal_indices[config["norm_train"]+config["norm_val"]:])
 
-dataset = FDIADataset(test_indices, config["dataset_root"])
+# Shuffle the indices:
+random.shuffle(test_indices)
+
+# Get the final PyG dataset
+test_dataset = FDIADataset(test_indices, config["dataset_root"])
 
 
 # -- Instantiate model --
@@ -41,7 +54,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.backends.cudnn.benchmark = True
 print(f"Device selected: {device}")
 
-in_feats = dataset[0].x.size(1)
+in_feats = test_dataset[0].x.size(1)
 """
 model = GNNArmaTransformer(
     in_channels=in_feats,
