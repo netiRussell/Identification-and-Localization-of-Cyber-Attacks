@@ -4,6 +4,9 @@ import torch
 from torch_geometric.data import Data
 import random
 
+# TODO: to be deleted
+import sys
+
 # Enable reproducibility
 torch.backends.cudnn.deterministic = True
 random.seed(123)
@@ -43,8 +46,18 @@ class FDIADataset(torch.utils.data.Dataset):
         x = torch.tensor(np.load(os.path.join(self.root, f"x_{i}.npy")),
                          dtype=torch.float)
         
-        
-        # labels: 0/1 per–node target array of shape [2848]
-        y = torch.tensor(np.load(os.path.join(self.root, f"target_{i}.npy")),
-                         dtype=torch.long)
-        return Data(x=x, edge_index=self.edge_index, edge_attr=self.edge_attr, y=y)
+        # Get raw target with both node-level and graph-level labels
+        raw_y = torch.tensor(np.load(os.path.join(self.root, f"target_{i}.npy")),
+                         dtype=torch.float)
+        # Node-level labels: 0/1 per–node target array of shape [2848]
+        y = raw_y[:-1]
+        # Graph-level labels: 0 - no attack present, 1 - an attack took place
+        y_graph = raw_y[-1]
+    
+
+        return Data(x=x, edge_index=self.edge_index, edge_attr=self.edge_attr, y=y, y_graph = y_graph)
+    
+    
+    
+    
+    

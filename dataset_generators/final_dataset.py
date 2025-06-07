@@ -12,10 +12,14 @@ import sys
 # # # # # # # # # # # #
 
 # -- Prepare normal scaling --
-# Collect all P and Q
-all_P = np.load(f"../init_dataset/x{0}.npy")[:, 0]
-all_Q = np.load(f"../init_dataset/x{0}.npy")[:, 1]
+# Define initial mins and maxs
+X0 = np.load(f"../init_dataset/x{0}.npy", mmap_mode="r")
+P_min = X0[:, 0].min()
+P_max = X0[:, 0].max()
+Q_min = X0[:, 1].min()
+Q_max = X0[:, 1].max()
 
+# Get the final mins and maxs
 for i in range(1,36000):
     print(f"Current graph: {i}")
     
@@ -23,13 +27,22 @@ for i in range(1,36000):
     X = np.load(f"../init_dataset/x{i}.npy")
     
     # Extract the node features to be attacked
-    all_P = np.concatenate([all_P, X[:, 0]])
-    all_Q = np.concatenate([all_Q, X[:, 1]])
+    p = X[:, 0]
+    q = X[:, 1]
 
-# Define mins and maxs
-P_min, P_max = all_P.min(), all_P.max()
-Q_min, Q_max = all_Q.min(), all_Q.max()
-    
+    # Update global mins/maxs
+    cur_p_min, cur_p_max = p.min(), p.max()
+    cur_q_min, cur_q_max = q.min(), q.max()
+
+    if cur_p_min < P_min:
+        P_min = cur_p_min
+    if cur_p_max > P_max:
+        P_max = cur_p_max
+    if cur_q_min < Q_min:
+        Q_min = cur_q_min
+    if cur_q_max > Q_max:
+        Q_max = cur_q_max
+
 
 # -- The first half, attacked with Ad --
 for i in range(9000):
@@ -57,9 +70,7 @@ for i in range(9000):
   X[:,1] = (X[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
 
   # Generate target(expected output) for multi-label supervised learning
-  target = np.array((1,2))
-  target[0] = mask.astype(int) # node-level
-  target[1] = np.array([1]) # graph-level
+  target = np.concatenate([mask.astype(int), [1]])
 
   # Save the modified files
   saveNetwork(X, target, i)
@@ -86,9 +97,7 @@ for i in range(9000, 18000):
   X[:,1] = (X[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
 
   # Generate target(expected output) for multi-label supervised learning
-  target = np.array((1,2))
-  target[0] = mask.astype(int) # node-level
-  target[1] = np.array([1]) # graph-level
+  target = np.concatenate([mask.astype(int), [1]])
 
   # Save the modified files
   saveNetwork(X, target, i)
@@ -108,9 +117,7 @@ for i in range(18000, 36000):
   X[:,1] = (X[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
 
   # Generate target(expected output) for multi-label supervised learning
-  target = np.array((1,2))
-  target[0] = mask.astype(int) # node-level
-  target[1] = np.array([0]) # graph-level
+  target = np.concatenate([mask.astype(int), [0]])
 
   # Save the modified files
   saveNetwork(X, target, i)
