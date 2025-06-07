@@ -6,7 +6,6 @@ import random
 
 from model.ARMA import GNNArma
 
-from torch.utils.data import random_split
 from torch.amp import autocast, GradScaler
 import gc
 import time
@@ -14,6 +13,7 @@ import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 from torch.nn.utils import clip_grad_norm_
 from torch_geometric.utils import to_dense_batch
+from torch.optim.lr_scheduler import LambdaLR
 
 
 from dataset import FDIADataset
@@ -51,6 +51,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
               "weight_decay": 1e-5,
+              "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "total_num_of_samples": 36000,
               "Ad_start": 0,
@@ -136,16 +137,24 @@ model = GNNArma(
 #model = torch.compile(model, backend="aot_eager")
 model = model.to(device)
 
-# Define the criterion, optimizer, and scheduler
+# - Define the criterion, optimizer, and scheduler -
 #criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
 criterion = nn.BCEWithLogitsLoss()
-optimizer = optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
-#use_cuda = (device.type == 'cuda')
-#scaler = GradScaler(enabled=use_cuda)
+
+optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+
+def lr_lambda(current_step: int):
+    if current_step < config["n_lrWarmup_steps"]:
+        return float(current_step) / float(500)
+    return 1.0  # keep base_lr after warm-up
+
+scheduler = LambdaLR(optimizer, lr_lambda)
+
 
 # Scaler and Autocast 
 # (seems to have negative impact on the training; hence, turned off)
+#use_cuda = (device.type == 'cuda')
+#scaler = GradScaler(enabled=use_cuda)
 use_cuda = False
 scaler = GradScaler(enabled=False)
 
@@ -189,6 +198,7 @@ def train_epoch(epoch):
         if (minibatch_id+1) % accum_steps == 0:
             print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
             scaler.step(optimizer)
+            scheduler.step()
             scaler.update()
             optimizer.zero_grad()
     
@@ -212,11 +222,8 @@ def validate(val_loader):
     all_preds = []
     all_targets = []
     
-    # Declare arrays for metrics
-    all_recalls = []
-    all_FAs = []
-    all_F1s = []
-
+    # Declare holders for metrics
+    FA, F1, recall = 0
     # Make sure grads of the model won't be affected
     with torch.no_grad():
         for batch in val_loader:
@@ -257,34 +264,28 @@ def validate(val_loader):
             all_targets.append(target_nodes)
             
             # Calculate current metrics
-            FA, F1, recall = 0
             if( target_graph == 0 ):
                 # - No attack case -
                 # If prediction is 100% correct (all nodes = 0 since no attack)
                 if(np.sum(pred_nodes) == 0):
-                    FA = 0
-                    F1 = 1
-                    recall = 1
+                    FA += 0
+                    F1 += 1
+                    recall += 1
                 # If at least 1 node is a mismatch (has a value of 1)    
                 else:
-                   FA = 1
-                   F1 = 0
-                   recall = 0
+                   FA += 1
+                   F1 += 0
+                   recall += 0
             else:
                 # - Attack took place case -
                 # Compute FP, TN, and FA
                 FP = np.logical_and(pred_nodes == 1, target_nodes == 0).sum()
                 TN = np.logical_and(pred_nodes == 0, target_nodes == 0).sum()
-                FA = FP / (FP + TN) if (FP + TN) > 0 else 0.0
+                FA += FP / (FP + TN)
                 
                 # Compute Recall and F1
-                F1 = f1_score(target_nodes, pred_nodes, zero_division=0)
-                recall = recall_score(target_nodes, pred_nodes, zero_division=0) # DR
-                
-            # Save metrics
-            all_FAs(FA)
-            all_F1s.append(F1)
-            all_recalls.append(recall)
+                F1 += f1_score(target_nodes, pred_nodes, zero_division=0)
+                recall += recall_score(target_nodes, pred_nodes, zero_division=0) # DR
                 
         
 
@@ -296,7 +297,10 @@ def validate(val_loader):
         precision = precision_score(all_targets, all_preds, zero_division=0)
         accuracy  = (all_preds == all_targets).mean() * 100
         
-        return precision, recall, f1, accuracy, FA, total_loss/len(val_loader)
+        # Number of elements in metrices (used to get mean)
+        n_elem_metrices = len(val_loader)
+        
+        return precision, recall/n_elem_metrices, F1/n_elem_metrices, accuracy, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -313,6 +317,9 @@ rec_arr = [] # DR
 fa_arr = []
 
 for epoch in range(1, config["num_epochs"] + 1):
+    # TODO: test
+    prec, rec, f1, accuracy, FA, avg_loss = validate(val_loader)
+    
     # Conduct a training for a single epoch
     train_loss = train_epoch(epoch)
     

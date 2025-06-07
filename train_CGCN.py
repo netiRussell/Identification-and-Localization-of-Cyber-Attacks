@@ -5,9 +5,7 @@ from torch_geometric.loader import DataLoader
 import random
 
 from model.CGCN import CGCN
-from model.ARMA_Transformer import GNNArmaTransformer
 
-from torch.utils.data import random_split
 from torch.amp import autocast, GradScaler
 import gc
 import time
@@ -15,6 +13,7 @@ import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 from torch.nn.utils import clip_grad_norm_
 from torch_geometric.utils import to_dense_batch
+from torch.optim.lr_scheduler import LambdaLR
 
 
 from dataset import FDIADataset
@@ -52,6 +51,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
               "weight_decay": 1e-5,
+              "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "total_num_of_samples": 36000,
               "Ad_start": 0,
@@ -125,7 +125,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.backends.cudnn.benchmark = True
 print(f"Device selected: {device}")
 
-# Define the model
+# - Define the model -
 model = CGCN(
     in_channels=in_feats,
     u=32,
@@ -134,16 +134,23 @@ model = CGCN(
 #model = torch.compile(model, backend="aot_eager")
 model = model.to(device)
 
-# Define the criterion, optimizer, and scheduler
+# - Define the criterion, optimizer, and scheduler -
 #criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
 criterion = nn.BCEWithLogitsLoss()
-optimizer = optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
-#scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
+
+optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+
+def lr_lambda(current_step: int):
+    if current_step < config["n_lrWarmup_steps"]:
+        return float(current_step) / float(500)
+    return 1.0  # keep base_lr after warm-up
+
+scheduler = LambdaLR(optimizer, lr_lambda)
+
+# - Scaler and Autocast -
+# (seems to have negative impact on the training; hence, turned off)
 #use_cuda = (device.type == 'cuda')
 #scaler = GradScaler(enabled=use_cuda)
-
-# Scaler and Autocast 
-# (seems to have negative impact on the training; hence, turned off)
 use_cuda = False
 scaler = GradScaler(enabled=False)
 
@@ -185,6 +192,7 @@ def train_epoch(epoch):
         if (minibatch_id+1) % accum_steps == 0:
             print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
             scaler.step(optimizer)
+            scheduler.step()
             scaler.update()
             optimizer.zero_grad()
     
@@ -281,9 +289,6 @@ for epoch in range(1, config["num_epochs"] + 1):
     f1_arr.append(f1)
     rec_arr.append(rec)
     fa_arr.append(FA)
-    
-    # Update sheduler to decrease learning rate in case f1 doesn't improve
-    #scheduler.step(f1)
     
     # Check how much time have passed since the beginning of the model training
     # and print out the information of the epoch
