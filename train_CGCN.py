@@ -138,7 +138,7 @@ model = model.to(device)
 #criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
+#scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
 #use_cuda = (device.type == 'cuda')
 #scaler = GradScaler(enabled=use_cuda)
 
@@ -165,9 +165,8 @@ def train_epoch(epoch):
         minibatch = minibatch.to(device)
         
         with autocast(device_type=device.type, enabled=use_cuda):
-            # Get target for a batch
-            y_dense, _ = to_dense_batch(minibatch.y, minibatch.batch)
-            target = (y_dense.sum(dim=1) > 0).float()
+            # Get target for the batch
+            target = minibatch.y_graph
             
             # Get model's raw output (logits)
             logits = model(minibatch.x, 
@@ -222,8 +221,8 @@ def validate(val_loader):
                 batch.batch
             )
             
-            # Get target
-            target = torch.max(batch.y).unsqueeze(0).float()
+            # Get target for the batch
+            target = batch.y_graph
             
             # Compute loss
             loss = criterion(logits, target)
@@ -234,36 +233,17 @@ def validate(val_loader):
             
             # Convert probability into a classification
             pred = 1 if prob > 0.5 else 0
-            
-            
+             
             # Append current outputs
             all_preds.append(pred)
             all_targets.append(target.item())
-            
-            """
-            # TODO: to be finished for ARMA training
-            # Get metrics
-            if(graph_target == 0):
-                # No attack case written explicitly (to avoid div by 0)
-                if(graph_pred == 0):
-                    # Prediction is correct
-                    all_f1.append(1)
-                    all_fa.append(0)
-                    all_dr.append(1)
-                else:
-                    # Prediction isn't correct
-                    all_f1.append(0)
-                    all_fa.append(1)
-                    all_dr.append(0)      
-            else:
-            """
         
 
         # Concatenate across batches
         all_preds   = np.asarray(all_preds)
         all_targets = np.asarray(all_targets)
     
-        # Compute TP, FN, FP, TN
+        # Compute FP, TN
         FP = np.logical_and(all_preds == 1, all_targets == 0).sum()
         TN = np.logical_and(all_preds == 0, all_targets == 0).sum()
     
@@ -303,7 +283,7 @@ for epoch in range(1, config["num_epochs"] + 1):
     fa_arr.append(FA)
     
     # Update sheduler to decrease learning rate in case f1 doesn't improve
-    scheduler.step(f1)
+    #scheduler.step(f1)
     
     # Check how much time have passed since the beginning of the model training
     # and print out the information of the epoch

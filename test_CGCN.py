@@ -15,7 +15,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 # -- Load the saved state --
-checkpoint = torch.load('./saved_grads/checkpoint2025_06_03.pth.tar', weights_only=False)
+checkpoint = torch.load('./saved_grads/checkpoint2025_06_07.pth.tar', weights_only=False)
 config = checkpoint['config']
 
 # -- Prepare the dataset --
@@ -94,11 +94,8 @@ for batch in test_loader:
     logits = torch.sigmoid(logits)
     logits[0] = 1 if logits[0] > 0.5 else 0
     
-    #preds  = logits.argmax(dim=1)
-    #current_correct = (preds == batch.y).sum().item()
-    
-    print(int(logits[0]),torch.max(batch.y).item())
-    if(int(logits[0]) == torch.max(batch.y).item()):
+    print(int(logits[0]), batch.y_graph.item())
+    if(int(logits[0]) == int(batch.y_graph.item())):
         strict_correct +=1
 
 print(f"Test score: {((strict_correct / total) * 100):.2f}%")

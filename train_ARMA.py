@@ -167,9 +167,9 @@ def train_epoch(epoch):
         minibatch = minibatch.to(device)
         
         with autocast(device_type=device.type, enabled=use_cuda):
-            # Get target for a batch
-            y_dense, _ = to_dense_batch(minibatch.y, minibatch.batch)
-            target = (y_dense.sum(dim=1) > 0).float()
+            # Get targets for the batch
+            target_nodes = minibatch.y
+            target_graph = minibatch.y_graph
             
             # Get model's raw output (logits)
             logits_nodes, logits_graph = model(minibatch.x, 
@@ -211,6 +211,11 @@ def validate(val_loader):
     # Declare arrays where the predictions and corresponding targets(labels) will be stored
     all_preds = []
     all_targets = []
+    
+    # Declare arrays for metrics
+    all_recalls = []
+    all_FAs = []
+    all_F1s = []
 
     # Make sure grads of the model won't be affected
     with torch.no_grad():
@@ -225,11 +230,9 @@ def validate(val_loader):
                 batch.batch
             )
             
-            # Get node-level target
-            target_nodes = torch.max(batch.y[0]).unsqueeze(0).float()
-            
-            # Get graph-level target
-            target_graph = torch.max(batch.y[0]).unsqueeze(0).float()
+            # Get targets for the batch
+            target_nodes = batch.y
+            target_graph = batch.y_graph
             
             # Compute loss
             loss = criterion(logits_nodes, target_nodes)
@@ -237,59 +240,61 @@ def validate(val_loader):
             total_loss += loss.item()
             
             # Apply activation function on the logits to get node-level probability
-            prob_nodes = torch.sigmoid(logits)
-            
-            # Convert probability into a classification
-            pred_nodes = 1 if prob > 0.5 else 0
+            # and convert it into a classification
+            pred_nodes = 1 if torch.sigmoid(logits_nodes) > 0.5 else 0    
             
             # Get graph-level classification:
             graph_pred = (logits_graph > 0).long()
             
-            # Append values to metrices
-            if(graph_pred == 0):
-                # No attack case
-            else:
-                # Attack took place case
-            
-            
+            # Turn tensors into NumPy arrays
+            pred_nodes = pred_nodes.numpy()
+            target_nodes = target_nodes.numpy()
             
             # Append current outputs
-            all_preds.append(pred)
-            all_targets.append(target.item())
+            print(pred_nodes, target_nodes)
+            sys.exit()
+            all_preds.append(pred_nodes)
+            all_targets.append(target_nodes)
             
-            """
-            # TODO: to be finished for ARMA training
-            # Get metrics
-            if(graph_target == 0):
-                # No attack case written explicitly (to avoid div by 0)
-                if(graph_pred == 0):
-                    # Prediction is correct
-                    all_f1.append(1)
-                    all_fa.append(0)
-                    all_dr.append(1)
+            # Calculate current metrics
+            FA, F1, recall = 0
+            if( target_graph == 0 ):
+                # - No attack case -
+                # If prediction is 100% correct (all nodes = 0 since no attack)
+                if(np.sum(pred_nodes) == 0):
+                    FA = 0
+                    F1 = 1
+                    recall = 1
+                # If at least 1 node is a mismatch (has a value of 1)    
                 else:
-                    # Prediction isn't correct
-                    all_f1.append(0)
-                    all_fa.append(1)
-                    all_dr.append(0)      
+                   FA = 1
+                   F1 = 0
+                   recall = 0
             else:
-            """
+                # - Attack took place case -
+                # Compute FP, TN, and FA
+                FP = np.logical_and(pred_nodes == 1, target_nodes == 0).sum()
+                TN = np.logical_and(pred_nodes == 0, target_nodes == 0).sum()
+                FA = FP / (FP + TN) if (FP + TN) > 0 else 0.0
+                
+                # Compute Recall and F1
+                F1 = f1_score(target_nodes, pred_nodes, zero_division=0)
+                recall = recall_score(target_nodes, pred_nodes, zero_division=0) # DR
+                
+            # Save metrics
+            all_FAs(FA)
+            all_F1s.append(F1)
+            all_recalls.append(recall)
+                
         
 
         # Concatenate across batches
         all_preds   = np.asarray(all_preds)
         all_targets = np.asarray(all_targets)
     
-        # Compute TP, FN, FP, TN
-        FP = np.logical_and(all_preds == 1, all_targets == 0).sum()
-        TN = np.logical_and(all_preds == 0, all_targets == 0).sum()
-    
         # Metrics
         precision = precision_score(all_targets, all_preds, zero_division=0)
-        recall    = recall_score(all_targets, all_preds, zero_division=0)
         accuracy  = (all_preds == all_targets).mean() * 100
-        f1        = f1_score(all_targets, all_preds, zero_division=0)
-        FA        = FP / (FP + TN) if (FP + TN) > 0 else 0.0
         
         return precision, recall, f1, accuracy, FA, total_loss/len(val_loader)
 
@@ -304,7 +309,7 @@ patience_counter = 0
 start = time.time()
 accuracies_arr = []
 f1_arr = []
-rec_arr = []
+rec_arr = [] # DR
 fa_arr = []
 
 for epoch in range(1, config["num_epochs"] + 1):
