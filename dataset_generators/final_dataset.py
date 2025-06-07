@@ -1,23 +1,57 @@
 import numpy as np
+import torch
 
 # Implemented functions
 from functions import saveNetwork, loadDataset
 
+# TODO: to be deleteds
 import sys
-import torch
 
 # # # # # # # # # # # #
 # ---- Main code ---- #
 # # # # # # # # # # # #
 
-# The first half, attacked with Ad
+# -- Prepare normal scaling --
+# Define initial mins and maxs
+X0 = np.load(f"../init_dataset/x{0}.npy", mmap_mode="r")
+P_min = X0[:, 0].min()
+P_max = X0[:, 0].max()
+Q_min = X0[:, 1].min()
+Q_max = X0[:, 1].max()
+
+# Get the final mins and maxs
+for i in range(1,36000):
+    print(f"Current graph: {i}")
+    
+    # Load a graph
+    X = np.load(f"../init_dataset/x{i}.npy")
+    
+    # Extract the node features to be attacked
+    p = X[:, 0]
+    q = X[:, 1]
+
+    # Update global mins/maxs
+    cur_p_min, cur_p_max = p.min(), p.max()
+    cur_q_min, cur_q_max = q.min(), q.max()
+
+    if cur_p_min < P_min:
+        P_min = cur_p_min
+    if cur_p_max > P_max:
+        P_max = cur_p_max
+    if cur_q_min < Q_min:
+        Q_min = cur_q_min
+    if cur_q_max > Q_max:
+        Q_max = cur_q_max
+
+
+# -- The first half, attacked with Ad --
 for i in range(9000):
   print(f"\nCurrent cycle: #{i}")
   
   # Load a node features and a mask with the buses to be attacked marked as True
   X, mask = loadDataset(i, attack=True)
 
-  # -- Ad data subset --
+  # - Ad data subset -
   print("Ad attack chosen")
       
   # Extract the node features to be attacked
@@ -31,28 +65,24 @@ for i in range(9000):
   # Exclude Voltage magnitude and angle
   X = X[:, :2]
   
-  # Normalize the sample:
-  # Get a range of min and max values
-  min_vals = np.min(X, axis=0)
-  max_vals = np.max(X, axis=0)
-  range_vals = np.clip(max_vals - min_vals, a_min=1e-8, a_max=None)
   # Apply normal scaling [0,1]
-  X = (X - min_vals) / range_vals
+  X[:,0] = (X[:,0] - P_min) / (P_max - P_min + 1e-8)
+  X[:,1] = (X[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
 
-  # Generate target (expected output)
-  target = mask.astype(int)
+  # Generate target(expected output) for multi-label supervised learning
+  target = np.concatenate([mask.astype(int), [1]])
 
   # Save the modified files
   saveNetwork(X, target, i)
 
-# The first half, attacked with As
+# -- The first half, attacked with As -- 
 for i in range(9000, 18000):
   print(f"\nCurrent cycle: #{i}")
   
   # Load a node features and a mask with the buses to be attacked marked as True
   X, mask = loadDataset(i, attack=True)
 
-  # -- As data subset --
+  # - As data subset -
   print("As attack chosen")
     
   # Apply the scale-based attack on the marked buses
@@ -62,21 +92,17 @@ for i in range(9000, 18000):
   # Exclude Voltage magnitude and angle
   X = X[:, :2]
   
-  # Normalize the sample:
-  # Get a range of min and max values
-  min_vals = np.min(X, axis=0)
-  max_vals = np.max(X, axis=0)
-  range_vals = np.clip(max_vals - min_vals, a_min=1e-8, a_max=None)
   # Apply normal scaling [0,1]
-  X = (X - min_vals) / range_vals
+  X[:,0] = (X[:,0] - P_min) / (P_max - P_min + 1e-8)
+  X[:,1] = (X[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
 
-  # Generate target (expected output)
-  target = mask.astype(int)
+  # Generate target(expected output) for multi-label supervised learning
+  target = np.concatenate([mask.astype(int), [1]])
 
   # Save the modified files
   saveNetwork(X, target, i)
 
- # The second half, no attack 
+ # -- The second half, no attack --
 for i in range(18000, 36000):
   print(f"\nCurrent cycle: #{i}")
   
@@ -86,16 +112,12 @@ for i in range(18000, 36000):
   # Exclude Voltage magnitude and angle
   X = X[:, :2]
   
-  # Normalize the sample:
-  # Get a range of min and max values
-  min_vals = np.min(X, axis=0)
-  max_vals = np.max(X, axis=0)
-  range_vals = np.clip(max_vals - min_vals, a_min=1e-8, a_max=None)
   # Apply normal scaling [0,1]
-  X = (X - min_vals) / range_vals
+  X[:,0] = (X[:,0] - P_min) / (P_max - P_min + 1e-8)
+  X[:,1] = (X[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
 
-  # Generate target (expected output)
-  target = mask.astype(int)
+  # Generate target(expected output) for multi-label supervised learning
+  target = np.concatenate([mask.astype(int), [0]])
 
   # Save the modified files
   saveNetwork(X, target, i)

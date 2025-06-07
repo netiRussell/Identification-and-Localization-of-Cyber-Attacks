@@ -20,60 +20,48 @@ class GNNArma(nn.Module):
                  num_stacks=3, num_layers=5, dropout=0.1):
         super(GNNArma, self).__init__()
         
-        self.conv1 = ARMAConv(in_channels, hidden_channels,
+        self.ARMAconv1 = ARMAConv(in_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
         self.gn1 = GraphNorm(hidden_channels)
         self.dropout1 = nn.Dropout(dropout)
         
-        self.conv2 = ARMAConv(hidden_channels, hidden_channels,
+        self.ARMAconv2 = ARMAConv(hidden_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
         self.gn2 = GraphNorm(hidden_channels)
         self.dropout1 = nn.Dropout(dropout)
         
-        self.conv3 = ARMAConv(hidden_channels, hidden_channels,
+        self.ARMAconv3 = ARMAConv(hidden_channels, 1,
                               num_stacks=num_stacks, num_layers=num_layers)
         self.gn3 = GraphNorm(hidden_channels)
         self.dropout3 = nn.Dropout(dropout)
         
         
         # Classifier
-        self.classifier = nn.Linear(hidden_channels, 2)
+        self.classifier = nn.Linear(1, 1)
 
     def forward(self, x, edge_index, weights):
         # First ARMA layer
-        x = self.conv1(x, edge_index, weights)
+        x = self.ARMAconv1(x, edge_index, weights)
         x = self.gn1(x)
         x = F.relu(x)
         x = self.dropout1(x)
         
         # Second ARMA layer
-        x = self.conv2(x, edge_index, weights)
+        x = self.ARMAconv2(x, edge_index, weights)
         x = self.gn2(x)
         x = F.relu(x)
         x = self.dropout2(x)
         
         # Third ARMA layer
-        x = self.conv3(x, edge_index, weights)
+        x = self.ARMAconv3(x, edge_index, weights)
         x = self.gn3(x)
         x = F.relu(x)
         x = self.dropout3(x)
         
-        # Classification logits per node
-        logits = self.classifier(x)                  # [num_nodes, 2]
+        # Classification logits per node (Localizing an attack)
+        logits_nodes = self.classifier(x).squeeze(-1)              # [num_nodes]
         
-        return logits
-
-
-"""
-Training Initialization:
-    
-model = GNNArmaTransformer(
-    in_channels=in_feats,
-    hidden_channels=config["hidden_channels"],
-    out_channels=config["out_channels"],
-    num_stacks=config["num_stacks"], 
-    num_layers=config["num_layers"],
-    transformer_heads=config["transformer_heads"],
-    transformer_layers=config["transformer_layers"]
-)
-"""
+        # Classification logits per graph (Identifying an attack)
+        logits_graph = torch.max(logits_nodes) # choose max one
+        
+        return logits_nodes, logits_graph
