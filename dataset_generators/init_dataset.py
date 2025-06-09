@@ -48,11 +48,8 @@ def singleCycle( net ):
     pp.runpp(net)
 
 
-    # -- Add 1% Guassian noise --
+    # -- Add 1% noise --
     """
-    Uniform 1% option:
-    noise = np.random.uniform(-0.01, 0.01, size=bus_meas.shape)
-
     p_from_mw - Real (active) power in megawatts (MW) flowing from the “from” bus of the line.
     q_from_mvar - Reactive power in megavolt-amperes reactive (MVAr) flowing from the “from” bus.
     p_to_mw - Real power in MW flowing into the “to” bus of the line.
@@ -61,8 +58,14 @@ def singleCycle( net ):
 
     measurements_line = net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]]
     measurements_bus = net.res_bus[["p_mw", "q_mvar", "vm_pu", "va_degree"]]
-    noise_line = np.random.normal(loc=0.0, scale=0.01, size=measurements_line.shape)
-    noise_bus = np.random.normal(loc=0.0, scale=0.01, size=measurements_bus.shape)
+    
+    # Guassian option:
+    #noise_line = np.random.normal(loc=0.0, scale=0.01, size=measurements_line.shape)
+    #noise_bus = np.random.normal(loc=0.0, scale=0.01, size=measurements_bus.shape)
+    
+    # Uniform
+    noise_line = np.random.uniform(-0.01, 0.01, size=measurements_line.shape)
+    noise_bus = np.random.uniform(-0.01, 0.01, size=measurements_bus.shape)
 
     net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]] += measurements_line * noise_line
     net.res_bus[["p_mw", "q_mvar", "vm_pu", "va_degree"]] += measurements_bus * noise_bus
