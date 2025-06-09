@@ -16,7 +16,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 test_config = {
     "shuffle_dataset": False,
-    "checkpoint_name": "checkpoint2025_06_07.pth.tar"
+    "checkpoint_name": "checkpoint2025_06_09.pth.tar"
     }
 
 

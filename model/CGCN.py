@@ -20,26 +20,30 @@ class CGCN(nn.Module):
       
       Batch normalization layers help
     """
-    def __init__(self, in_channels, u, Ks, dropout=0.1, num_nodes=2848 ):
+    def __init__(self, in_channels, u, Ks, dropout=0.1, num_nodes=2848, trial=None ):
         super(CGCN, self).__init__()
         
         self.num_nodes = num_nodes
         
         self.chebConv1 = ChebConv(in_channels, u, Ks)
         self.bn1 = BatchNorm(u)
-        self.dropout1 = nn.Dropout(dropout)
+        dropout1_rate = dropout if trial == None else trial.suggest_float("dropout_l1", 0.1, 0.5)
+        self.dropout1 = nn.Dropout(dropout1_rate)
 
         self.chebConv2 = ChebConv(u, u, Ks)
         self.bn2 = BatchNorm(u)
-        self.dropout2 = nn.Dropout(dropout)
+        dropout2_rate = dropout if trial == None else trial.suggest_float("dropout_l1", 0.1, 0.5)
+        self.dropout2 = nn.Dropout(dropout2_rate)
 
         self.chebConv3 = ChebConv(u, u, Ks)
         self.bn3 = BatchNorm(u)
-        self.dropout3 = nn.Dropout(dropout)
+        dropout3_rate = dropout if trial == None else trial.suggest_float("dropout_l1", 0.1, 0.5)
+        self.dropout3 = nn.Dropout(dropout3_rate)
 
         self.chebConv4 = ChebConv(u, u, Ks)
         self.bn4 = BatchNorm(u)
-        self.dropout4 = nn.Dropout(dropout)
+        dropout4_rate = dropout if trial == None else trial.suggest_float("dropout_l1", 0.1, 0.5)
+        self.dropout4 = nn.Dropout(dropout4_rate)
         
         """
         self.chebConv5 = ChebConv(u, u, Ks)
