@@ -60,12 +60,12 @@ def singleCycle( net ):
     """
 
     measurements_line = net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]]
-    measurements_bus = net.res_bus[["vm_pu", "va_degree"]]
+    measurements_bus = net.res_bus[["p_mw", "q_mvar", "vm_pu", "va_degree"]]
     noise_line = np.random.normal(loc=0.0, scale=0.01, size=measurements_line.shape)
     noise_bus = np.random.normal(loc=0.0, scale=0.01, size=measurements_bus.shape)
 
     net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]] += measurements_line * noise_line
-    net.res_bus[["vm_pu", "va_degree"]] += measurements_bus * noise_bus
+    net.res_bus[["p_mw", "q_mvar", "vm_pu", "va_degree"]] += measurements_bus * noise_bus
 
 
 

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import ARMAConv, GraphNorm
+from torch_geometric.nn import ARMAConv, BatchNorm
 
 class GNNArma(nn.Module):
     """
@@ -22,17 +22,17 @@ class GNNArma(nn.Module):
         
         self.ARMAconv1 = ARMAConv(in_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.gn1 = GraphNorm(hidden_channels)
+        self.bn1 = BatchNorm(hidden_channels)
         self.dropout1 = nn.Dropout(dropout)
         
         self.ARMAconv2 = ARMAConv(hidden_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.gn2 = GraphNorm(hidden_channels)
-        self.dropout1 = nn.Dropout(dropout)
+        self.bn2 = BatchNorm(hidden_channels)
+        self.dropout2 = nn.Dropout(dropout)
         
         self.ARMAconv3 = ARMAConv(hidden_channels, 1,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.gn3 = GraphNorm(hidden_channels)
+        self.bn3 = BatchNorm(1)
         self.dropout3 = nn.Dropout(dropout)
         
         
@@ -42,19 +42,19 @@ class GNNArma(nn.Module):
     def forward(self, x, edge_index, weights):
         # First ARMA layer
         x = self.ARMAconv1(x, edge_index, weights)
-        x = self.gn1(x)
+        x = self.bn1(x)
         x = F.relu(x)
         x = self.dropout1(x)
         
         # Second ARMA layer
         x = self.ARMAconv2(x, edge_index, weights)
-        x = self.gn2(x)
+        x = self.bn2(x)
         x = F.relu(x)
         x = self.dropout2(x)
         
         # Third ARMA layer
         x = self.ARMAconv3(x, edge_index, weights)
-        x = self.gn3(x)
+        x = self.bn3(x)
         x = F.relu(x)
         x = self.dropout3(x)
         
@@ -65,3 +65,7 @@ class GNNArma(nn.Module):
         logits_graph = torch.max(logits_nodes) # choose max one
         
         return logits_nodes, logits_graph
+    
+    
+    
+    

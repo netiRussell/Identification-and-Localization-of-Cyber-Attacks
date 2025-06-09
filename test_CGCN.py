@@ -14,8 +14,14 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
+test_config = {
+    "shuffle_dataset": False,
+    "checkpoint_name": "checkpoint2025_06_07.pth.tar"
+    }
+
+
 # -- Load the saved state --
-checkpoint = torch.load('./saved_grads/checkpoint2025_06_07.pth.tar', weights_only=False)
+checkpoint = torch.load(f"./saved_grads/{test_config['checkpoint_name']}", weights_only=False)
 config = checkpoint['config']
 
 # -- Prepare the dataset --
@@ -43,7 +49,8 @@ test_indices = (Ad_indices[config["Ad_train"]+config["Ad_val"]:] +
                normal_indices[config["norm_train"]+config["norm_val"]:])
 
 # Shuffle the indices:
-random.shuffle(test_indices)
+if(test_config["shuffle_dataset"]):
+    random.shuffle(test_indices)
 
 # Get the final PyG dataset
 test_dataset = FDIADataset(test_indices, config["dataset_root"])

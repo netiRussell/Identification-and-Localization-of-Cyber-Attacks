@@ -68,10 +68,10 @@ config = {
               "norm_val": 3000,
               "norm_test": 3000,
               
-              "hidden_channels": 128,
-              "out_channels": 256,
-              "num_stacks": 4, 
-              "num_layers": 5,
+              "num_nodes": 2848,
+              "u": 32, # hidden channels
+              "Ks": 5,
+              "dropout": 0.2,
               
               "transformer_layers": 6,
               "transformer_heads": 8
@@ -128,8 +128,10 @@ print(f"Device selected: {device}")
 # - Define the model -
 model = CGCN(
     in_channels=in_feats,
-    u=32,
-    Ks=5    
+    u=config["u"],
+    Ks=config["Ks"],
+    dropout=config["dropout"],
+    num_nodes = config["num_nodes"]
 )
 #model = torch.compile(model, backend="aot_eager")
 model = model.to(device)
