@@ -5,9 +5,18 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 import joblib
+import random
+from torch_geometric.loader import DataLoader
 
 # TODO: To be deleted
 import sys
+# Enable reproducibility
+torch.backends.cudnn.deterministic = True
+random.seed(123)
+torch.manual_seed(123)
+torch.cuda.manual_seed(123)
+np.random.seed(123)
+
 
 def saveNetwork( X, target, i):
   """
@@ -181,6 +190,91 @@ def visualizeLossValid(fa, dr, f1, acc):
     plt.tight_layout()
     plt.show()
     
+
+def preparePyGDataset(config, FDIADataset):
+    """
+    Prepares PyG loaders and computes the demensions of input features
+    
+
+    Parameters:
+    ----------
+    config: a Python dictionary
+      A dictionary of settings for the model and datasets
+      
+    FDIADataset: a PyTorch Dataset class
+      A PyG dataset that turns NumPy arrays into structured 'Data's
+
+      
+    Returns:
+    -------
+      train_loader: a PyTorch DataLoader
+          A DataLoader that holds samples for training
+          
+      valid_loader: a PyTorch DataLoader
+          A DataLoader that holds samples for validation
+          
+      test_loader: a PyTorch DataLoader
+          A DataLoader that holds samples for testing
+          
+      in_feats: Integer
+          An integer that represents the demensions of the input for the 1st ChebConv layer
+          Which is just 4=(P, Q, V, angle) or 2=(P, Q) per node
+    """
+    
+    # Definition of the lists containing indices of Ad ans As samples
+    Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
+    As_indices = list(range(config["As_start"], config["As_end"]))
+
+    # Definition of the list containing indices of not attacked(normal) samples
+    normal_indices = list(range(int(config["total_num_of_samples"]/2), config["total_num_of_samples"]))
+
+    # 4/6 1/6 1/6 split
+    #train_len = int(4/6 * config["total_num_of_samples"])
+    #val_len   = int(1/6 * config["total_num_of_samples"]) + train_len
+    #test_len   = int(1/6 * config["total_num_of_samples"]) + train_len + val_len
+
+    # Get training indices: 6k of Ad + 6k of As + 12k of norm = 4/6 of 36k samples or 24k samples total
+    train_indices = Ad_indices[:config["Ad_train"]] + As_indices[:config["As_train"]] + normal_indices[:config["norm_train"]]
+
+    # Get validation indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
+    val_indices = (Ad_indices[config["Ad_train"]:config["Ad_train"]+config["Ad_val"]] + 
+                   As_indices[config["As_train"]:config["As_train"]+config["As_val"]] + 
+                   normal_indices[config["norm_train"]:config["norm_train"]+config["norm_val"]])
+    
+    # Get test indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
+    test_indices = (Ad_indices[config["Ad_train"]+config["Ad_val"]:] + 
+                   As_indices[config["As_train"]+config["As_val"]:] + 
+                   normal_indices[config["norm_train"]+config["norm_val"]:])
+
+    # Mix attacks and normal indices within the subsets
+    random.shuffle(train_indices)
+    random.shuffle(val_indices)
+    # ! Test is not shuffled for easier debugging
+
+    # Get datasets
+    train_dataset = FDIADataset(train_indices, config["dataset_root"])
+    val_dataset = FDIADataset(val_indices, config["dataset_root"])
+    test_dataset = FDIADataset(test_indices, config["dataset_root"])
+
+    # Define loaders for each data subset to sequentially load batches
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
+    valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=1)
+
+    # Get input features (Size of X in the first dimension)
+    # Supposed to be 4 (P, Q, V, angle) or 2 (P, Q)
+    in_feats = train_dataset[0].x.size(1)
+    
+    return train_loader, valid_loader, test_loader, in_feats
+
+
+def selectDevice():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    torch.backends.cudnn.benchmark = True
+    print(f"Device selected: {device}")
+    
+    return device
+
 
 def generateDatasetStandardScaler( indices ):
     """

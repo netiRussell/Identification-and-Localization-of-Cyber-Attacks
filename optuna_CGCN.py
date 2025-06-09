@@ -4,46 +4,22 @@ import torch.optim as optim
 from torch_geometric.loader import DataLoader
 import random
 
+
 from model.CGCN import CGCN
 
 from torch.amp import autocast, GradScaler
-import gc
-import time
 import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
-from torch.nn.utils import clip_grad_norm_
-from torch_geometric.utils import to_dense_batch
-from torch.optim.lr_scheduler import LambdaLR
 
+import optuna
+from optuna.trial import TrialState
 
 from dataset import FDIADataset
-from dataset_generators.functions import save_checkpoint
 
 # TODO: delete at the final stage
 import sys
 
-
-# -- Clear cache from the previous training --
-torch.cuda.empty_cache()
-gc.collect()
-
-# -- Enable reproducibility --
-torch.backends.cudnn.deterministic = True
-random.seed(123)
-torch.manual_seed(123)
-torch.cuda.manual_seed(123)
-np.random.seed(123)
-
-'''
-Questions:
-...
-
-Input: edge_indices, weights, node features
-Output: 2848 boolean values where False means no attack on the bus and Trues means the bus has been attacked
-'''
-        
-    
-# -- Define the params and hyperparams for training --
+# -- Define the params and hyperparams for tuning --
 config = {
               "dataset_root": "./dataset",
     
@@ -77,9 +53,6 @@ config = {
               "transformer_heads": 8
           }
 
-
-
-
 # --- Prepare the dataset ---
 
 # Definition of the lists containing indices of Ad ans As samples
@@ -112,42 +85,21 @@ val_dataset = FDIADataset(val_indices, config["dataset_root"])
 
 # Define loaders for each data subset to sequentially load batches
 train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
+valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
 
 # Get input features (Size of X in the first dimension)
 # Supposed to be 4 (P, Q, V, angle) or 2 (P, Q)
 in_feats = train_dataset[0].x.size(1)
 
-
-
-# -- Instantiate model, loss, optimizer, scheduler --
+# -- Select device --
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.backends.cudnn.benchmark = True
 print(f"Device selected: {device}")
 
-# - Define the model -
-model = CGCN(
-    in_channels=in_feats,
-    u=config["u"],
-    Ks=config["Ks"],
-    dropout=config["dropout"],
-    num_nodes = config["num_nodes"]
-)
-#model = torch.compile(model, backend="aot_eager")
-model = model.to(device)
 
-# - Define the criterion, optimizer, and scheduler -
+# - Define the criterion --
 #criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
 criterion = nn.BCEWithLogitsLoss()
-
-optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
-
-def lr_lambda(current_step: int):
-    if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / float(500)
-    return 1.0  # keep base_lr after warm-up
-
-scheduler = LambdaLR(optimizer, lr_lambda)
 
 # - Scaler and Autocast -
 # (seems to have negative impact on the training; hence, turned off)
@@ -157,9 +109,8 @@ use_cuda = False
 scaler = GradScaler(enabled=False)
 
 
-
-# -- Training & evaluation functions --
-def train_epoch(epoch):
+# -- Custom train and validation --
+def train_epoch(model, optimizer, epoch):
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
     
@@ -194,7 +145,6 @@ def train_epoch(epoch):
         if (minibatch_id+1) % accum_steps == 0:
             print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
             scaler.step(optimizer)
-            scheduler.step()
             scaler.update()
             optimizer.zero_grad()
     
@@ -207,7 +157,7 @@ def train_epoch(epoch):
     return total_loss / len(train_loader)
 
 
-def validate(val_loader):
+def validate(model, val_loader):
     # Turn on the evaluation mode to exclude features like dropout regularizatiion
     model.eval()
     
@@ -266,61 +216,72 @@ def validate(val_loader):
         
         return precision, recall, f1, accuracy, FA, total_loss/len(val_loader)
 
-
-# # # # # # # # # # # # # # # # # # #
-# ---- Training and validation ---- #
-# # # # # # # # # # # # # # # # # # #
-
-# Declaration of global variables
-best_loss = 99.99
-patience_counter = 0
-start = time.time()
-accuracies_arr = []
-f1_arr = []
-rec_arr = []
-fa_arr = []
-
-for epoch in range(1, config["num_epochs"] + 1):
-    # Conduct a training for a single epoch
-    train_loss = train_epoch(epoch)
+# -- Optuna functions --
+def define_model(trial):
+    model = CGCN(
+        in_channels=in_feats,
+        u=config["u"],
+        Ks=config["Ks"],
+        dropout=config["dropout"],
+        num_nodes = config["num_nodes"],
+        trial = trial
+    )
     
-    # Conduct a validation for a single epoch
-    prec, rec, f1, accuracy, FA, avg_loss = validate(val_loader)
-    # Append all the metrics from the validation
-    accuracies_arr.append(accuracy)
-    f1_arr.append(f1)
-    rec_arr.append(rec)
-    fa_arr.append(FA)
+    return model
+
+def objective(trial):
+    # Generate the model.
+    model = define_model(trial).to(device)
     
-    # Check how much time have passed since the beginning of the model training
-    # and print out the information of the epoch
-    elapsed = time.time() - start
-    print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
-    print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
-    print(f"FA={FA:.4f}, Accuracy={accuracy}, Validation Loss: {avg_loss:.4f}")
-    print("----------------------------------------------------\n\n")
+    # Generate the lr
+    lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
 
-    # Save checkpoint
-    save_checkpoint({
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'config': config,
-        'currentEpoch': epoch,
-        'trainingTime': time.time() - start,
-        'accuracies': np.array(accuracies_arr),
-        'prec': prec,
-        'rec': rec_arr,
-        'f1': f1_arr,
-        'fa': fa_arr
-    })
+    # Generate the optimizer.
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=config["weight_decay"])
 
-    # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
-    if best_loss - avg_loss >= 1e-4:
-        best_loss = avg_loss
-        patience_counter = 0
-    else:
-        patience_counter += 1
-        if patience_counter >= 16:
-            print(f"Early stopping: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
-            break
+    # Training of the model.
+    for epoch in range(config["num_epochs"]):
+        
+        train_loss = train_epoch(model, optimizer, epoch)
+        prec, rec, f1, accuracy, FA, avg_loss = validate(model, valid_loader)
+        
+        print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f},")
+        print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f},")
+        print(f"FA={FA:.4f}, Accuracy={accuracy}, Validation Loss: {avg_loss:.4f}")
+        print("----------------------------------------------------\n\n")
 
+        trial.report(accuracy, epoch)
+
+        # Handle pruning based on the intermediate value.
+        if trial.should_prune():
+            raise optuna.exceptions.TrialPruned()
+
+    return accuracy
+
+
+# # # # # # # # # # # # # # # # # #
+# ---- Hyperparameter tuning ---- #
+# # # # # # # # # # # # # # # # # #
+
+study = optuna.create_study(direction="maximize", 
+                            pruner=optuna.pruners.PatientPruner(optuna.pruners.MedianPruner(
+                                    n_startup_trials=5, n_warmup_steps=30, interval_steps=10), patience=2)
+                            )
+study.optimize(objective, n_trials=300, timeout=600)
+
+pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+print("Study statistics: ")
+print("  Number of finished trials: ", len(study.trials))
+print("  Number of pruned trials: ", len(pruned_trials))
+print("  Number of complete trials: ", len(complete_trials))
+
+print("Best trial:")
+trial = study.best_trial
+
+print("  Value: ", trial.value)
+
+print("  Params: ")
+for key, value in trial.params.items():
+    print("    {}: {}".format(key, value))
