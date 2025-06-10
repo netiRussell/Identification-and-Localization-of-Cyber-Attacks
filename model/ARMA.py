@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import ARMAConv, BatchNorm
+from torch_geometric.utils import to_dense_batch
 
 class GNNArma(nn.Module):
     """
@@ -17,8 +18,10 @@ class GNNArma(nn.Module):
     x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
     """
     def __init__(self, in_channels=2, hidden_channels=32, 
-                 num_stacks=3, num_layers=5, dropout=0.1):
+                 num_stacks=3, num_layers=5, dropout=0.1, num_nodes=2848):
         super(GNNArma, self).__init__()
+        
+        self.num_nodes = num_nodes
         
         self.ARMAconv1 = ARMAConv(in_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
@@ -39,7 +42,7 @@ class GNNArma(nn.Module):
         # Classifier
         self.classifier = nn.Linear(1, 1)
 
-    def forward(self, x, edge_index, weights):
+    def forward(self, x, edge_index, weights, batch):
         # First ARMA layer
         x = self.ARMAconv1(x, edge_index, weights)
         x = self.bn1(x)
@@ -58,11 +61,14 @@ class GNNArma(nn.Module):
         x = F.relu(x)
         x = self.dropout3(x)
         
+        # from [total_nodes, u] → [batch_size, num_nodes, u]
+        x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
+        
         # Classification logits per node (Localizing an attack)
-        logits_nodes = self.classifier(x).squeeze(-1)              # [num_nodes]
+        logits_nodes = self.classifier(x).squeeze(-1)              # [batch_size, num_nodes]
         
         # Classification logits per graph (Identifying an attack)
-        logits_graph = torch.max(logits_nodes) # choose max one
+        logits_graph = logits_nodes.max(dim=1).values # choose max one
         
         return logits_nodes, logits_graph
     

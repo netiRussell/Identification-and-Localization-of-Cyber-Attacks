@@ -261,7 +261,7 @@ for epoch in range(1, config["num_epochs"] + 1):
     elapsed = time.time() - start
     print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
-    print(f"FA={FA:.4f}, Accuracy={accuracy}, Validation Loss: {avg_loss:.4f}")
+    print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint

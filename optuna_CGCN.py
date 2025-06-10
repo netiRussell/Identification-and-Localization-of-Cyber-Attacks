@@ -25,7 +25,7 @@ import sys
 config = {
               "dataset_root": "./dataset",
     
-              "num_epochs": 256,
+              "num_epochs": 100,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
               "weight_decay": 1e-5,
@@ -220,7 +220,7 @@ def objective(trial):
         
         print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f},")
         print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f},")
-        print(f"FA={FA:.4f}, Accuracy={accuracy}, Validation Loss: {avg_loss:.4f}")
+        print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
         print("----------------------------------------------------\n\n")
 
         trial.report(accuracy, epoch)

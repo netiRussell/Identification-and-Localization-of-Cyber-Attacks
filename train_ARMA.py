@@ -73,6 +73,7 @@ config = {
               "num_stacks": 3, 
               "num_layers": 5,
               "dropout": 0.1, 
+              "num_nodes": 2848,
               
               "transformer_layers": 6,
               "transformer_heads": 8
@@ -94,7 +95,8 @@ model = GNNArma(
     hidden_channels=config["hidden_channels"],
     num_stacks=config["num_stacks"],
     num_layers=config["num_layers"], 
-    dropout=config["dropout"]  
+    dropout=config["dropout"],
+    num_nodes=config["num_nodes"]
 )
 #model = torch.compile(model, backend="aot_eager")
 model = model.to(device)
@@ -145,13 +147,13 @@ def train_epoch(epoch):
             # Get model's raw output (logits)
             logits_nodes, logits_graph = model(minibatch.x, 
                            minibatch.edge_index, 
-                           weights=minibatch.edge_attr, 
+                           weights=minibatch.edge_attr,
                            batch=minibatch.batch)
             
-            # Compute loss and save it 
+            # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += criterion(logits_graph, target_graph)
-            total_loss += loss.item()
+            loss += criterion(logits_graph, target_graph.squeeze(0))
+            total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
         scaler.scale(loss / accum_steps).backward()
@@ -185,9 +187,11 @@ def validate(valid_loader):
     all_targets = []
     
     # Declare holders for metrics
-    FA = 0,
-    F1 = 0, 
+    FA = 0
+    F1 = 0 
     recall = 0
+    accuracy = 0
+    
     # Make sure grads of the model won't be affected
     with torch.no_grad():
         for batch in valid_loader:
@@ -201,9 +205,13 @@ def validate(valid_loader):
                 batch.batch
             )
             
+            # Change dimensions of the graph output to work with batch=1 case
+            logits_graph = logits_graph.squeeze(0)
+            logits_nodes = logits_nodes.squeeze(0)
+            
             # Get targets for the batch
             target_nodes = batch.y
-            target_graph = batch.y_graph
+            target_graph = batch.y_graph.squeeze(0)
             
             # Compute loss
             loss = criterion(logits_nodes, target_nodes)
@@ -212,18 +220,16 @@ def validate(valid_loader):
             
             # Apply activation function on the logits to get node-level probability
             # and convert it into a classification
-            pred_nodes = 1 if torch.sigmoid(logits_nodes) > 0.5 else 0    
+            pred_nodes = (torch.sigmoid(logits_nodes) > 0.5).float()  
             
             # Get graph-level classification:
-            graph_pred = (logits_graph > 0).long()
+            #graph_pred = (logits_graph > 0).long()
             
             # Turn tensors into NumPy arrays
-            pred_nodes = pred_nodes.numpy()
-            target_nodes = target_nodes.numpy()
+            pred_nodes = pred_nodes.cpu().numpy()
+            target_nodes = target_nodes.cpu().numpy()
             
             # Append current outputs
-            print(pred_nodes, target_nodes)
-            sys.exit()
             all_preds.append(pred_nodes)
             all_targets.append(target_nodes)
             
@@ -235,11 +241,11 @@ def validate(valid_loader):
                     FA += 0
                     F1 += 1
                     recall += 1
+                    accuracy += 1
+                    
                 # If at least 1 node is a mismatch (has a value of 1)    
                 else:
                    FA += 1
-                   F1 += 0
-                   recall += 0
             else:
                 # - Attack took place case -
                 # Compute FP, TN, and FA
@@ -251,6 +257,10 @@ def validate(valid_loader):
                 F1 += f1_score(target_nodes, pred_nodes, zero_division=0)
                 recall += recall_score(target_nodes, pred_nodes, zero_division=0) # DR
                 
+                # Compute a strict match
+                if( np.array_equal(pred_nodes, target_nodes) ):
+                    accuracy += 1
+                
         
 
         # Concatenate across batches
@@ -258,13 +268,12 @@ def validate(valid_loader):
         all_targets = np.asarray(all_targets)
     
         # Metrics
-        precision = precision_score(all_targets, all_preds, zero_division=0)
+        precision = precision_score(all_targets, all_preds, zero_division=0, average="micro")
         accuracy  = (all_preds == all_targets).mean() * 100
         
         # Number of elements in metrices (used to get mean)
         n_elem_metrices = len(valid_loader)
-        
-        return precision, recall/n_elem_metrices, F1/n_elem_metrices, accuracy, FA/n_elem_metrices, total_loss/n_elem_metrices
+        return precision, recall/n_elem_metrices, F1/n_elem_metrices, accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -281,9 +290,6 @@ rec_arr = [] # DR
 fa_arr = []
 
 for epoch in range(1, config["num_epochs"] + 1):
-    # TODO: test
-    prec, rec, f1, accuracy, FA, avg_loss = validate(valid_loader)
-    
     # Conduct a training for a single epoch
     train_loss = train_epoch(epoch)
     
@@ -295,15 +301,12 @@ for epoch in range(1, config["num_epochs"] + 1):
     rec_arr.append(rec)
     fa_arr.append(FA)
     
-    # Update sheduler to decrease learning rate in case f1 doesn't improve
-    scheduler.step(f1)
-    
     # Check how much time have passed since the beginning of the model training
     # and print out the information of the epoch
     elapsed = time.time() - start
     print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
-    print(f"FA={FA:.4f}, Accuracy={accuracy}, Validation Loss: {avg_loss:.4f}")
+    print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint
