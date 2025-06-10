@@ -27,23 +27,19 @@ class CGCN(nn.Module):
         
         self.chebConv1 = ChebConv(in_channels, u, Ks)
         self.bn1 = BatchNorm(u)
-        dropout1_rate = dropout if trial == None else trial.suggest_float("dropout_l1", 0.1, 0.5)
-        self.dropout1 = nn.Dropout(dropout1_rate)
+        self.dropout1 = nn.Dropout(dropout)
 
         self.chebConv2 = ChebConv(u, u, Ks)
         self.bn2 = BatchNorm(u)
-        dropout2_rate = dropout if trial == None else trial.suggest_float("dropout_l1", 0.1, 0.5)
-        self.dropout2 = nn.Dropout(dropout2_rate)
+        self.dropout2 = nn.Dropout(dropout)
 
         self.chebConv3 = ChebConv(u, u, Ks)
         self.bn3 = BatchNorm(u)
-        dropout3_rate = dropout if trial == None else trial.suggest_float("dropout_l1", 0.1, 0.5)
-        self.dropout3 = nn.Dropout(dropout3_rate)
+        self.dropout3 = nn.Dropout(dropout)
 
         self.chebConv4 = ChebConv(u, u, Ks)
         self.bn4 = BatchNorm(u)
-        dropout4_rate = dropout if trial == None else trial.suggest_float("dropout_l1", 0.1, 0.5)
-        self.dropout4 = nn.Dropout(dropout4_rate)
+        self.dropout4 = nn.Dropout(dropout)
         
         """
         self.chebConv5 = ChebConv(u, u, Ks)

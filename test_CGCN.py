@@ -22,7 +22,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "checkpoint2025_06_09.pth.tar"
+    "checkpoint_name": "checkpoint2025_06_00.pth.tar"
     }
 
 
@@ -59,9 +59,9 @@ total   = len(test_loader)
 
 for sample_id, sample in enumerate(test_loader):
     sample = sample.to(device)
-    logits = model(sample.x, sample.edge_index, weights=sample.edge_attr, batch=sample.batch)
+    _, logits = model(sample.x, sample.edge_index, weights=sample.edge_attr, batch=sample.batch)
     probs = torch.sigmoid(logits)
-    probs[0] = 1 if probs[0] > 0.3 else 0
+    classification = 1 if probs[0] > 0.5 else 0
     
     if sample_id < 1500:
         print("Ad")
@@ -70,8 +70,8 @@ for sample_id, sample in enumerate(test_loader):
     else:
         print("No attak")
     
-    print(f"Output: {probs[0]}, Expected: {sample.y_graph.item()}\n")
-    if(int(probs[0]) == int(sample.y_graph.item())):
+    print(f"Output: {probs.item()}({classification}), Expected: {sample.y_graph.item()}\n")
+    if(int(classification) == int(sample.y_graph.item())):
         strict_correct +=1
 
 print(f"Test score: {((strict_correct / total) * 100):.2f}%")

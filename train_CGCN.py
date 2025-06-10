@@ -71,7 +71,7 @@ config = {
               "num_nodes": 2848,
               "u": 32, # hidden channels
               "Ks": 5,
-              "dropout": 0.3,
+              "dropout": 0.5,
               
               "transformer_layers": 6,
               "transformer_heads": 8
@@ -148,8 +148,8 @@ def train_epoch(epoch):
             
             # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += criterion(logits_graph, target_graph)
-            total_loss += loss.item()
+            loss += (criterion(logits_graph, target_graph)/2)
+            total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
         scaler.scale(loss / accum_steps).backward()
