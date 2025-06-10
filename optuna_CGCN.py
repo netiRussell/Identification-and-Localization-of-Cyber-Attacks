@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
 import random
+import logging
 
 
 from model.CGCN import CGCN
@@ -197,6 +198,8 @@ def define_model(trial, dropout):
     return model
 
 def objective(trial):
+    print(f"---- Current trial: {trial.number} ----")
+    
     # Generate dropout
     dropout= trial.suggest_float("dropout", 0.1, 0.5)
     
@@ -238,11 +241,18 @@ def objective(trial):
 
 sampler = TPESampler(seed=123)
 
-study = optuna.create_study(direction="maximize", 
+
+optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
+study_name = "study2_06_10_25"  # Unique identifier of the study.
+storage_name = "sqlite:///{}.db".format(study_name)
+study = optuna.create_study(
+                            direction="maximize", 
                             sampler=sampler,
-                            pruner=optuna.pruners.PatientPruner(optuna.pruners.MedianPruner(
-                                    n_startup_trials=0, n_warmup_steps=30, interval_steps=5), patience=3)
+                            pruner=optuna.pruners.PatientPruner(wrapped_pruner=None, patience=5, min_delta=0.0),
+                            study_name=study_name,
+                            storage=storage_name
                             )
+
 study.optimize(objective, n_trials=100, timeout=None)
 
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])

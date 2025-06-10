@@ -7,3 +7,5 @@ __pycache__/
 /dataset
 /saved_grads
 /results
+study06_10_25.db
+*.db

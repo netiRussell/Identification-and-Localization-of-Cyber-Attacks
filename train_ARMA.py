@@ -70,9 +70,9 @@ config = {
               
               "in_channels": 2,
               "hidden_channels": 32,
-              "num_stacks": 3, 
-              "num_layers": 5,
-              "dropout": 0.1, 
+              "num_stacks": 4,  # K
+              "num_layers": 8,
+              "dropout": 0.3, 
               "num_nodes": 2848,
               
               "transformer_layers": 6,

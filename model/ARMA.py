@@ -33,10 +33,15 @@ class GNNArma(nn.Module):
         self.bn2 = BatchNorm(hidden_channels)
         self.dropout2 = nn.Dropout(dropout)
         
-        self.ARMAconv3 = ARMAConv(hidden_channels, 1,
+        self.ARMAconv3 = ARMAConv(hidden_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.bn3 = BatchNorm(1)
+        self.bn3 = BatchNorm(hidden_channels)
         self.dropout3 = nn.Dropout(dropout)
+        
+        self.ARMAconv4 = ARMAConv(hidden_channels, 1,
+                              num_stacks=num_stacks, num_layers=num_layers)
+        self.bn4 = BatchNorm(1)
+        self.dropout4 = nn.Dropout(dropout)
         
         
         # Classifier
@@ -60,6 +65,12 @@ class GNNArma(nn.Module):
         x = self.bn3(x)
         x = F.relu(x)
         x = self.dropout3(x)
+        
+        # Fourth ARMA layer
+        x = self.ARMAconv4(x, edge_index, weights)
+        x = self.bn4(x)
+        x = F.relu(x)
+        x = self.dropout4(x)
         
         # from [total_nodes, u] → [batch_size, num_nodes, u]
         x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
