@@ -36,6 +36,7 @@ np.random.seed(123)
 
 '''
 Questions:
+    1) Should we only attack loads, no slack/PV bus:
 ...
 
 Input: edge_indices, weights, node features
@@ -69,9 +70,9 @@ config = {
               "norm_test": 3000,
               
               "num_nodes": 2848,
-              "u": 32, # hidden channels
-              "Ks": 5,
-              "dropout": 0.5,
+              "u": 64, # hidden channels
+              "Ks": 7,
+              "dropout": 0.4,
               
               "transformer_layers": 6,
               "transformer_heads": 8

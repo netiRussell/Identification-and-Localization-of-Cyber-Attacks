@@ -243,12 +243,12 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "study2_06_10_25"  # Unique identifier of the study.
+study_name = "study3_06_10_25"  # Unique identifier of the study.
 storage_name = "sqlite:///{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 
                             sampler=sampler,
-                            pruner=optuna.pruners.PatientPruner(wrapped_pruner=None, patience=5, min_delta=0.0),
+                            pruner=optuna.pruners.PatientPruner(wrapped_pruner=None, patience=10, min_delta=0.0),
                             study_name=study_name,
                             storage=storage_name
                             )

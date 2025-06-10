@@ -41,11 +41,9 @@ class CGCN(nn.Module):
         self.bn4 = BatchNorm(u)
         self.dropout4 = nn.Dropout(dropout)
         
-        """
         self.chebConv5 = ChebConv(u, u, Ks)
         self.bn5 = BatchNorm(u)
         self.dropout5 = nn.Dropout(dropout)
-        """
         
         self.flatten = nn.Flatten(start_dim=1)
         
@@ -83,14 +81,12 @@ class CGCN(nn.Module):
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv4")
         
-        """
         x = self.chebConv5(x, edge_index, weights)
         x = self.bn5(x)
         x = F.relu(x)
         x = self.dropout5(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv4")
-        """
         
         # from [total_nodes, u] → [batch_size, num_nodes, u]
         x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
