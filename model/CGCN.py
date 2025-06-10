@@ -53,7 +53,8 @@ class CGCN(nn.Module):
         
         self.flatten = nn.Flatten(start_dim=1)
         
-        self.dense = nn.Linear(u*num_nodes, 1) 
+        self.node_head  = nn.Linear(u, 1) # Transforms each node's into a single feature node
+        self.graph_head = nn.Linear(u*num_nodes, 1) # Transforms an entire graph of nodes into a single value
 
     def forward(self, x, edge_index, weights, batch):
         # 4 CGCN layers
@@ -96,13 +97,16 @@ class CGCN(nn.Module):
         """
         
         # from [total_nodes, u] → [batch_size, num_nodes, u]
-        x, mask = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
+        x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
         
-        # flatten per-graph: [B, N, u] → [B, N·u]
-        x = self.flatten(x)
+        # Node-level logits: [B, N]
+        logits_nodes = self.node_head(x).squeeze(-1)
+        
+        # Graph-level logits: [B]
+        logits_graph = self.graph_head(x.flatten(start_dim=1)).squeeze(-1)
 
         # Avoid NaN, inf
         #x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
 
-        return self.dense(x).squeeze(-1) # (batch_size,)
+        return logits_nodes, logits_graph
        

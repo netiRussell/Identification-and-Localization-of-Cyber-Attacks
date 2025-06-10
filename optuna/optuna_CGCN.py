@@ -5,7 +5,7 @@ from torch_geometric.loader import DataLoader
 import random
 
 
-from model.CGCN import CGCN
+from ..model.CGCN import CGCN
 
 from torch.amp import autocast, GradScaler
 import numpy as np
@@ -14,8 +14,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 import optuna
 from optuna.trial import TrialState
 
-from dataset import FDIADataset
-from dataset_generators.functions import preparePyGDataset, selectDevice
+from ..dataset import FDIADataset
 
 # TODO: delete at the final stage
 import sys
@@ -54,11 +53,49 @@ config = {
               "transformer_heads": 8
           }
 
-# -- Prepare the dataset --
-train_loader, valid_loader, _, in_feats = preparePyGDataset(config, FDIADataset)
+# --- Prepare the dataset ---
 
-# - Select device -
-device = selectDevice()
+# Definition of the lists containing indices of Ad ans As samples
+Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
+As_indices = list(range(config["As_start"], config["As_end"]))
+
+# Definition of the list containing indices of not attacked(normal) samples
+normal_indices = list(range(int(config["total_num_of_samples"]/2), config["total_num_of_samples"]))
+
+# 4/6 1/6 1/6 split
+train_len = int(4/6 * config["total_num_of_samples"])
+val_len   = int(1/6 * config["total_num_of_samples"]) + train_len
+#test_len   = int(1/6 * config["total_num_of_samples"]) + train_len + val_len
+
+# Get training indices: 6k of Ad + 6k of As + 12k of norm = 4/6 of 36k samples or 24k samples total
+train_indices = Ad_indices[:config["Ad_train"]] + As_indices[:config["As_train"]] + normal_indices[:config["norm_train"]]
+
+# Get validation indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
+val_indices = (Ad_indices[config["Ad_train"]:config["Ad_train"]+config["Ad_val"]] + 
+               As_indices[config["As_train"]:config["As_train"]+config["As_val"]] + 
+               normal_indices[config["norm_train"]:config["norm_train"]+config["norm_val"]])
+
+# Mix attacks and normal indices within the subsets
+random.shuffle(train_indices)
+random.shuffle(val_indices)
+
+# Get datasets
+train_dataset = FDIADataset(train_indices, config["dataset_root"])
+val_dataset = FDIADataset(val_indices, config["dataset_root"])
+
+# Define loaders for each data subset to sequentially load batches
+train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
+valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
+
+# Get input features (Size of X in the first dimension)
+# Supposed to be 4 (P, Q, V, angle) or 2 (P, Q)
+in_feats = train_dataset[0].x.size(1)
+
+# -- Select device --
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+torch.backends.cudnn.benchmark = True
+print(f"Device selected: {device}")
+
 
 # - Define the criterion --
 #criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
@@ -120,7 +157,7 @@ def train_epoch(model, optimizer, epoch):
     return total_loss / len(train_loader)
 
 
-def validate(model, valid_loader):
+def validate(model, val_loader):
     # Turn on the evaluation mode to exclude features like dropout regularizatiion
     model.eval()
     
@@ -133,7 +170,7 @@ def validate(model, valid_loader):
 
     # Make sure grads of the model won't be affected
     with torch.no_grad():
-        for batch in valid_loader:
+        for batch in val_loader:
             batch = batch.to(device)
 
             # Get model's raw output(logits)
@@ -177,7 +214,7 @@ def validate(model, valid_loader):
         f1        = f1_score(all_targets, all_preds, zero_division=0)
         FA        = FP / (FP + TN) if (FP + TN) > 0 else 0.0
         
-        return precision, recall, f1, accuracy, FA, total_loss/len(valid_loader)
+        return precision, recall, f1, accuracy, FA, total_loss/len(val_loader)
 
 # -- Optuna functions --
 def define_model(trial):
@@ -226,11 +263,8 @@ def objective(trial):
 # ---- Hyperparameter tuning ---- #
 # # # # # # # # # # # # # # # # # #
 
-study = optuna.create_study(direction="maximize", 
-                            pruner=optuna.pruners.PatientPruner(optuna.pruners.MedianPruner(
-                                    n_startup_trials=5, n_warmup_steps=30, interval_steps=10), patience=2)
-                            )
-study.optimize(objective, n_trials=100, timeout=600)
+study = optuna.create_study(direction="maximize")
+study.optimize(objective, n_trials=300, timeout=600)
 
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
 complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
