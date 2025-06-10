@@ -17,7 +17,7 @@ dataset_config = {
 
 
 """
-# Compare Ad vs As influence
+# --- Compare Ad vs As influence ---
 X0, mask = loadDataset(100, attack=True)
 Xd = np.copy(X0)
     
@@ -33,12 +33,12 @@ Q_tobe_attacked = Xd[mask, 1]
 # Get mean and STD for 90% of P
 lo, hi = np.percentile(P, [5,95])
 P_trim = P[(P>=lo)&(P<=hi)]
-P_mu, P_std  = P_trim.mean(), P_trim.std()
+P_mu, P_std  = P_trim.mean(), P_trim.std() / 4
 
 # Get mean and STD for 90% of Q
 lo, hi = np.percentile(Q, [5,95])
 Q_trim = Q[(Q>=lo)&(Q<=hi)]
-Q_mu, Q_std  = Q_trim.mean(), Q_trim.std()
+Q_mu, Q_std  = Q_trim.mean(), Q_trim.std() / 4
 
 # Attack buses that have some load only (otherwise => easy to detect)
 mask_P = mask & (P != 0)
@@ -58,6 +58,8 @@ print(f"Xs: {np.mean(np.abs(X0-Xs))}")
 
 sys.exit()
 """
+
+
 
 if( dataset_config["normal_scaling"] ):
     # -- Prepare normal scaling --
@@ -115,12 +117,12 @@ for i in range(9000):
   # Get mean and STD for 90% of P
   lo, hi = np.percentile(P, [5,95])
   P_trim = P[(P>=lo)&(P<=hi)]
-  P_mu, P_std  = P_trim.mean(), P_trim.std()
+  P_mu, P_std  = P_trim.mean(), P_trim.std() / 4
   
   # Get mean and STD for 90% of Q
   lo, hi = np.percentile(Q, [5,95])
   Q_trim = Q[(Q>=lo)&(Q<=hi)]
-  Q_mu, Q_std  = Q_trim.mean(), Q_trim.std()
+  Q_mu, Q_std  = Q_trim.mean(), Q_trim.std() / 4
   
   # Attack buses that have some load only (otherwise => easy to detect)
   mask_P = mask & (P != 0)
