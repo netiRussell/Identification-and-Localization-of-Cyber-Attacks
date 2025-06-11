@@ -17,7 +17,7 @@ from torch.optim.lr_scheduler import LambdaLR
 
 
 from dataset import FDIADataset
-from dataset_generators.functions import save_checkpoint
+from dataset_generators.functions import save_checkpoint, preparePyGDataset, selectDevice
 
 # TODO: delete at the final stage
 import sys
@@ -36,6 +36,7 @@ np.random.seed(123)
 
 '''
 Questions:
+    1) Should we only attack loads, no slack/PV bus:
 ...
 
 Input: edge_indices, weights, node features
@@ -69,9 +70,9 @@ config = {
               "norm_test": 3000,
               
               "num_nodes": 2848,
-              "u": 32, # hidden channels
-              "Ks": 5,
-              "dropout": 0.2,
+              "u": 64, # hidden channels
+              "Ks": 6,
+              "dropout": 0.4,
               
               "transformer_layers": 6,
               "transformer_heads": 8
@@ -81,49 +82,11 @@ config = {
 
 
 # --- Prepare the dataset ---
-
-# Definition of the lists containing indices of Ad ans As samples
-Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
-As_indices = list(range(config["As_start"], config["As_end"]))
-
-# Definition of the list containing indices of not attacked(normal) samples
-normal_indices = list(range(int(config["total_num_of_samples"]/2), config["total_num_of_samples"]))
-
-# 4/6 1/6 1/6 split
-train_len = int(4/6 * config["total_num_of_samples"])
-val_len   = int(1/6 * config["total_num_of_samples"]) + train_len
-#test_len   = int(1/6 * config["total_num_of_samples"]) + train_len + val_len
-
-# Get training indices: 6k of Ad + 6k of As + 12k of norm = 4/6 of 36k samples or 24k samples total
-train_indices = Ad_indices[:config["Ad_train"]] + As_indices[:config["As_train"]] + normal_indices[:config["norm_train"]]
-
-# Get validation indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
-val_indices = (Ad_indices[config["Ad_train"]:config["Ad_train"]+config["Ad_val"]] + 
-               As_indices[config["As_train"]:config["As_train"]+config["As_val"]] + 
-               normal_indices[config["norm_train"]:config["norm_train"]+config["norm_val"]])
-
-# Mix attacks and normal indices within the subsets
-random.shuffle(train_indices)
-random.shuffle(val_indices)
-
-# Get datasets
-train_dataset = FDIADataset(train_indices, config["dataset_root"])
-val_dataset = FDIADataset(val_indices, config["dataset_root"])
-
-# Define loaders for each data subset to sequentially load batches
-train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
-
-# Get input features (Size of X in the first dimension)
-# Supposed to be 4 (P, Q, V, angle) or 2 (P, Q)
-in_feats = train_dataset[0].x.size(1)
-
-
+train_loader, valid_loader, _, in_feats = preparePyGDataset(config, FDIADataset)
 
 # -- Instantiate model, loss, optimizer, scheduler --
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-torch.backends.cudnn.benchmark = True
-print(f"Device selected: {device}")
+# - Select device -
+device = selectDevice()
 
 # - Define the model -
 model = CGCN(
@@ -175,17 +138,19 @@ def train_epoch(epoch):
         
         with autocast(device_type=device.type, enabled=use_cuda):
             # Get target for the batch
-            target = minibatch.y_graph
+            target_nodes = minibatch.y
+            target_graph = minibatch.y_graph
             
             # Get model's raw output (logits)
-            logits = model(minibatch.x, 
+            logits_nodes, logits_graph = model(minibatch.x, 
                            minibatch.edge_index, 
                            weights=minibatch.edge_attr, 
                            batch=minibatch.batch)
             
-            # Compute loss and save it 
-            loss   = criterion(logits, target)
-            total_loss += loss.item()
+            # Compute loss and save it
+            loss = criterion(logits_nodes.view(-1), target_nodes)
+            loss += (criterion(logits_graph, target_graph)/2)
+            total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
         scaler.scale(loss / accum_steps).backward()
@@ -207,7 +172,7 @@ def train_epoch(epoch):
     return total_loss / len(train_loader)
 
 
-def validate(val_loader):
+def validate(valid_loader):
     # Turn on the evaluation mode to exclude features like dropout regularizatiion
     model.eval()
     
@@ -220,11 +185,11 @@ def validate(val_loader):
 
     # Make sure grads of the model won't be affected
     with torch.no_grad():
-        for batch in val_loader:
+        for batch in valid_loader:
             batch = batch.to(device)
 
             # Get model's raw output(logits)
-            logits = model(
+            _, logits_graph = model(
                 batch.x,
                 batch.edge_index,
                 batch.edge_attr,
@@ -232,21 +197,21 @@ def validate(val_loader):
             )
             
             # Get target for the batch
-            target = batch.y_graph
+            target_graph = batch.y_graph
             
             # Compute loss
-            loss = criterion(logits, target)
+            loss = criterion(logits_graph, target_graph)
             total_loss += loss.item()
             
             # Apply activation function on the logits to get probability
-            prob = torch.sigmoid(logits)
+            prob = torch.sigmoid(logits_graph)
             
             # Convert probability into a classification
             pred = 1 if prob > 0.5 else 0
              
             # Append current outputs
             all_preds.append(pred)
-            all_targets.append(target.item())
+            all_targets.append(target_graph.item())
         
 
         # Concatenate across batches
@@ -264,7 +229,7 @@ def validate(val_loader):
         f1        = f1_score(all_targets, all_preds, zero_division=0)
         FA        = FP / (FP + TN) if (FP + TN) > 0 else 0.0
         
-        return precision, recall, f1, accuracy, FA, total_loss/len(val_loader)
+        return precision, recall, f1, accuracy, FA, total_loss/len(valid_loader)
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -285,7 +250,7 @@ for epoch in range(1, config["num_epochs"] + 1):
     train_loss = train_epoch(epoch)
     
     # Conduct a validation for a single epoch
-    prec, rec, f1, accuracy, FA, avg_loss = validate(val_loader)
+    prec, rec, f1, accuracy, FA, avg_loss = validate(valid_loader)
     # Append all the metrics from the validation
     accuracies_arr.append(accuracy)
     f1_arr.append(f1)
@@ -297,7 +262,7 @@ for epoch in range(1, config["num_epochs"] + 1):
     elapsed = time.time() - start
     print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
-    print(f"FA={FA:.4f}, Accuracy={accuracy}, Validation Loss: {avg_loss:.4f}")
+    print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint

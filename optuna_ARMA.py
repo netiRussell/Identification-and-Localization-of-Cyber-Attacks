@@ -3,47 +3,26 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
 import random
+import logging
+
 
 from model.ARMA import GNNArma
 
 from torch.amp import autocast, GradScaler
-import gc
-import time
 import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
-from torch.nn.utils import clip_grad_norm_
-from torch_geometric.utils import to_dense_batch
-from torch.optim.lr_scheduler import LambdaLR
 
+import optuna
+from optuna.trial import TrialState
+from optuna.samplers import TPESampler
 
 from dataset import FDIADataset
-from dataset_generators.functions import save_checkpoint, preparePyGDataset, selectDevice
+from dataset_generators.functions import preparePyGDataset, selectDevice
 
 # TODO: delete at the final stage
 import sys
 
-
-# -- Clear cache from the previous training --
-torch.cuda.empty_cache()
-gc.collect()
-
-# -- Enable reproducibility --
-torch.backends.cudnn.deterministic = True
-random.seed(123)
-torch.manual_seed(123)
-torch.cuda.manual_seed(123)
-np.random.seed(123)
-
-'''
-Questions:
-...
-
-Input: edge_indices, weights, node features
-Output: 2848 boolean values where False means no attack on the bus and Trues means the bus has been attacked
-'''
-        
-    
-# -- Define the params and hyperparams for training --
+# -- Define the params and hyperparams for tuning --
 config = {
               "dataset_root": "./dataset",
     
@@ -79,43 +58,17 @@ config = {
               "transformer_heads": 8
           }
 
-
-
-
 # -- Prepare the dataset --
 train_loader, valid_loader, _, in_feats = preparePyGDataset(config, FDIADataset)
 
-# -- Instantiate model, loss, optimizer, scheduler --
 # - Select device -
 device = selectDevice()
 
-# Define the model
-model = GNNArma(
-    in_channels=config["in_channels"], 
-    hidden_channels=config["hidden_channels"],
-    num_stacks=config["num_stacks"],
-    num_layers=config["num_layers"], 
-    dropout=config["dropout"],
-    num_nodes=config["num_nodes"]
-)
-#model = torch.compile(model, backend="aot_eager")
-model = model.to(device)
-
-# - Define the criterion, optimizer, and scheduler -
+# - Define the criterion --
 #criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
 criterion = nn.BCEWithLogitsLoss()
 
-optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
-
-def lr_lambda(current_step: int):
-    if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / float(500)
-    return 1.0  # keep base_lr after warm-up
-
-scheduler = LambdaLR(optimizer, lr_lambda)
-
-
-# Scaler and Autocast 
+# - Scaler and Autocast -
 # (seems to have negative impact on the training; hence, turned off)
 #use_cuda = (device.type == 'cuda')
 #scaler = GradScaler(enabled=use_cuda)
@@ -123,9 +76,8 @@ use_cuda = False
 scaler = GradScaler(enabled=False)
 
 
-
-# -- Training & evaluation functions --
-def train_epoch(epoch):
+# -- Custom train and validation --
+def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
     
@@ -152,7 +104,7 @@ def train_epoch(epoch):
             
             # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += criterion(logits_graph, target_graph.squeeze(0))
+            loss += (criterion(logits_graph, target_graph.squeeze(0))*graph_loss_importance)
             total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
@@ -162,7 +114,6 @@ def train_epoch(epoch):
         if (minibatch_id+1) % accum_steps == 0:
             print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
             scaler.step(optimizer)
-            scheduler.step()
             scaler.update()
             optimizer.zero_grad()
     
@@ -175,7 +126,7 @@ def train_epoch(epoch):
     return total_loss / len(train_loader)
 
 
-def validate(valid_loader):
+def validate(model, valid_loader):
     # Turn on the evaluation mode to exclude features like dropout regularizatiion
     model.eval()
     
@@ -275,60 +226,99 @@ def validate(valid_loader):
         return precision, recall/n_elem_metrices, F1/n_elem_metrices, accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
-# # # # # # # # # # # # # # # # # # #
-# ---- Training and validation ---- #
-# # # # # # # # # # # # # # # # # # #
-
-# Declaration of global variables
-best_loss = 99.99
-patience_counter = 0
-start = time.time()
-accuracies_arr = []
-f1_arr = []
-rec_arr = [] # DR
-fa_arr = []
-
-for epoch in range(1, config["num_epochs"] + 1):
-    # Conduct a training for a single epoch
-    train_loss = train_epoch(epoch)
+# -- Optuna functions --
+def define_model(trial, dropout, hidden_channels, num_stacks, num_layers):
+    model = GNNArma(
+        in_channels=config["in_channels"], 
+        hidden_channels=hidden_channels,
+        num_stacks=num_stacks,
+        num_layers=num_layers, 
+        dropout=dropout,
+        num_nodes=config["num_nodes"]
+    )
     
-    # Conduct a validation for a single epoch
-    prec, rec, f1, accuracy, FA, avg_loss = validate(valid_loader)
-    # Append all the metrics from the validation
-    accuracies_arr.append(accuracy)
-    f1_arr.append(f1)
-    rec_arr.append(rec)
-    fa_arr.append(FA)
+    return model
+
+def objective(trial):
+    print(f"---- Current trial: {trial.number} ----")
     
-    # Check how much time have passed since the beginning of the model training
-    # and print out the information of the epoch
-    elapsed = time.time() - start
-    print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
-    print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
-    print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
-    print("----------------------------------------------------\n\n")
+    # Generate dropout
+    dropout = trial.suggest_float("dropout", 0.1, 0.5)
+    
+    # Generate hidden features
+    hidden_channels = trial.suggest_categorical("hidden_channels", [32, 64, 128])
+    
+    # Generate number of stacks (K)
+    num_stacks = trial.suggest_categorical("num_stacks", [3, 4, 5, 6])
+    
+    # Generate number of layers (T)
+    num_layers = trial.suggest_categorical("num_layers", [4, 5, 6, 7, 8])
+    
+    # Generate the model
+    model = define_model(trial, dropout, hidden_channels, num_stacks, num_layers).to(device)
+    
+    # Generate the lr
+    lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+    
+    # Generate graph_loss importance
+    graph_loss_importance = trial.suggest_float("graph_loss_importance", 0.1, 2.0)
 
-    # Save checkpoint
-    save_checkpoint({
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'config': config,
-        'currentEpoch': epoch,
-        'trainingTime': time.time() - start,
-        'accuracies': np.array(accuracies_arr),
-        'prec': prec,
-        'rec': rec_arr,
-        'f1': f1_arr,
-        'fa': fa_arr
-    })
+    # Generate the optimizer.
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=config["weight_decay"])
 
-    # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
-    if best_loss - avg_loss >= 1e-4:
-        best_loss = avg_loss
-        patience_counter = 0
-    else:
-        patience_counter += 1
-        if patience_counter >= 16:
-            print(f"Early stopping: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
-            break
+    # Training of the model.
+    for epoch in range(config["num_epochs"]):
+        
+        train_loss = train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader)
+        prec, rec, f1, accuracy, FA, avg_loss = validate(model, valid_loader)
+        
+        print(f"\nEpoch#{epoch}, Trial#{trial.number}, Average Train Loss={train_loss:.4f},")
+        print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f},")
+        print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
+        print("----------------------------------------------------\n\n")
 
+        trial.report(accuracy, epoch)
+
+        # Handle pruning based on the intermediate value.
+        if trial.should_prune():
+            raise optuna.exceptions.TrialPruned()
+
+    return accuracy
+
+
+# # # # # # # # # # # # # # # # # #
+# ---- Hyperparameter tuning ---- #
+# # # # # # # # # # # # # # # # # #
+
+sampler = TPESampler(seed=123)
+
+
+optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
+study_name = "studyARMA2_06_10_25"  # Unique identifier of the study.
+storage_name = "sqlite:///{}.db".format(study_name)
+study = optuna.create_study(
+                            direction="maximize", 
+                            sampler=sampler,
+                            pruner=optuna.pruners.PatientPruner(wrapped_pruner=None, patience=5, min_delta=0.0),
+                            study_name=study_name,
+                            storage=storage_name
+                            )
+
+study.optimize(objective, n_trials=150, timeout=None)
+
+pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+print("Study statistics: ")
+print("  Number of finished trials: ", len(study.trials))
+print("  Number of pruned trials: ", len(pruned_trials))
+print("  Number of complete trials: ", len(complete_trials))
+
+print("Best trial:")
+trial = study.best_trial
+
+print("  Value: ", trial.value)
+
+print("  Params: ")
+for key, value in trial.params.items():
+    print("    {}: {}".format(key, value))

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
 import random
+import logging
 
 
 from model.CGCN import CGCN
@@ -13,8 +14,10 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 
 import optuna
 from optuna.trial import TrialState
+from optuna.samplers import TPESampler
 
 from dataset import FDIADataset
+from dataset_generators.functions import preparePyGDataset, selectDevice
 
 # TODO: delete at the final stage
 import sys
@@ -23,7 +26,7 @@ import sys
 config = {
               "dataset_root": "./dataset",
     
-              "num_epochs": 256,
+              "num_epochs": 100,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
               "weight_decay": 1e-5,
@@ -53,49 +56,11 @@ config = {
               "transformer_heads": 8
           }
 
-# --- Prepare the dataset ---
+# -- Prepare the dataset --
+train_loader, valid_loader, _, in_feats = preparePyGDataset(config, FDIADataset)
 
-# Definition of the lists containing indices of Ad ans As samples
-Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
-As_indices = list(range(config["As_start"], config["As_end"]))
-
-# Definition of the list containing indices of not attacked(normal) samples
-normal_indices = list(range(int(config["total_num_of_samples"]/2), config["total_num_of_samples"]))
-
-# 4/6 1/6 1/6 split
-train_len = int(4/6 * config["total_num_of_samples"])
-val_len   = int(1/6 * config["total_num_of_samples"]) + train_len
-#test_len   = int(1/6 * config["total_num_of_samples"]) + train_len + val_len
-
-# Get training indices: 6k of Ad + 6k of As + 12k of norm = 4/6 of 36k samples or 24k samples total
-train_indices = Ad_indices[:config["Ad_train"]] + As_indices[:config["As_train"]] + normal_indices[:config["norm_train"]]
-
-# Get validation indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
-val_indices = (Ad_indices[config["Ad_train"]:config["Ad_train"]+config["Ad_val"]] + 
-               As_indices[config["As_train"]:config["As_train"]+config["As_val"]] + 
-               normal_indices[config["norm_train"]:config["norm_train"]+config["norm_val"]])
-
-# Mix attacks and normal indices within the subsets
-random.shuffle(train_indices)
-random.shuffle(val_indices)
-
-# Get datasets
-train_dataset = FDIADataset(train_indices, config["dataset_root"])
-val_dataset = FDIADataset(val_indices, config["dataset_root"])
-
-# Define loaders for each data subset to sequentially load batches
-train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
-
-# Get input features (Size of X in the first dimension)
-# Supposed to be 4 (P, Q, V, angle) or 2 (P, Q)
-in_feats = train_dataset[0].x.size(1)
-
-# -- Select device --
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-torch.backends.cudnn.benchmark = True
-print(f"Device selected: {device}")
-
+# - Select device -
+device = selectDevice()
 
 # - Define the criterion --
 #criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
@@ -110,7 +75,7 @@ scaler = GradScaler(enabled=False)
 
 
 # -- Custom train and validation --
-def train_epoch(model, optimizer, epoch):
+def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
     
@@ -126,17 +91,19 @@ def train_epoch(model, optimizer, epoch):
         
         with autocast(device_type=device.type, enabled=use_cuda):
             # Get target for the batch
-            target = minibatch.y_graph
+            target_nodes = minibatch.y
+            target_graph = minibatch.y_graph
             
             # Get model's raw output (logits)
-            logits = model(minibatch.x, 
+            logits_nodes, logits_graph = model(minibatch.x, 
                            minibatch.edge_index, 
                            weights=minibatch.edge_attr, 
                            batch=minibatch.batch)
             
-            # Compute loss and save it 
-            loss   = criterion(logits, target)
-            total_loss += loss.item()
+            # Compute loss and save it
+            loss = criterion(logits_nodes.view(-1), target_nodes)
+            loss += (criterion(logits_graph, target_graph)*graph_loss_importance)
+            total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
         scaler.scale(loss / accum_steps).backward()
@@ -157,7 +124,7 @@ def train_epoch(model, optimizer, epoch):
     return total_loss / len(train_loader)
 
 
-def validate(model, val_loader):
+def validate(model, valid_loader):
     # Turn on the evaluation mode to exclude features like dropout regularizatiion
     model.eval()
     
@@ -170,11 +137,11 @@ def validate(model, val_loader):
 
     # Make sure grads of the model won't be affected
     with torch.no_grad():
-        for batch in val_loader:
+        for batch in valid_loader:
             batch = batch.to(device)
 
             # Get model's raw output(logits)
-            logits = model(
+            _, logits_graph = model(
                 batch.x,
                 batch.edge_index,
                 batch.edge_attr,
@@ -182,21 +149,21 @@ def validate(model, val_loader):
             )
             
             # Get target for the batch
-            target = batch.y_graph
+            target_graph = batch.y_graph
             
             # Compute loss
-            loss = criterion(logits, target)
+            loss = criterion(logits_graph, target_graph)
             total_loss += loss.item()
             
             # Apply activation function on the logits to get probability
-            prob = torch.sigmoid(logits)
+            prob = torch.sigmoid(logits_graph)
             
             # Convert probability into a classification
             pred = 1 if prob > 0.5 else 0
              
             # Append current outputs
             all_preds.append(pred)
-            all_targets.append(target.item())
+            all_targets.append(target_graph.item())
         
 
         # Concatenate across batches
@@ -214,15 +181,16 @@ def validate(model, val_loader):
         f1        = f1_score(all_targets, all_preds, zero_division=0)
         FA        = FP / (FP + TN) if (FP + TN) > 0 else 0.0
         
-        return precision, recall, f1, accuracy, FA, total_loss/len(val_loader)
+        return precision, recall, f1, accuracy, FA, total_loss/len(valid_loader)
+
 
 # -- Optuna functions --
-def define_model(trial):
+def define_model(trial, dropout, u, Ks):
     model = CGCN(
         in_channels=in_feats,
-        u=config["u"],
-        Ks=config["Ks"],
-        dropout=config["dropout"],
+        u=u,
+        Ks=Ks,
+        dropout=dropout,
         num_nodes = config["num_nodes"],
         trial = trial
     )
@@ -230,11 +198,25 @@ def define_model(trial):
     return model
 
 def objective(trial):
+    print(f"---- Current trial: {trial.number} ----")
+    
+    # Generate dropout
+    dropout = trial.suggest_float("dropout", 0.1, 0.5)
+    
+    # Generate hidden features
+    u = trial.suggest_categorical("u", [32, 64, 128])
+    
+    # Generate filter size K
+    Ks = trial.suggest_categorical("Ks", [5, 7, 9])
+    
     # Generate the model.
-    model = define_model(trial).to(device)
+    model = define_model(trial, dropout, u, Ks).to(device)
     
     # Generate the lr
     lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+    
+    # Generate graph_loss importance
+    graph_loss_importance = trial.suggest_float("graph_loss_importance", 0.1, 2.0)
 
     # Generate the optimizer.
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=config["weight_decay"])
@@ -242,12 +224,12 @@ def objective(trial):
     # Training of the model.
     for epoch in range(config["num_epochs"]):
         
-        train_loss = train_epoch(model, optimizer, epoch)
+        train_loss = train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader)
         prec, rec, f1, accuracy, FA, avg_loss = validate(model, valid_loader)
         
-        print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f},")
+        print(f"\nEpoch#{epoch}, Trial#{trial.number}, Average Train Loss={train_loss:.4f},")
         print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f},")
-        print(f"FA={FA:.4f}, Accuracy={accuracy}, Validation Loss: {avg_loss:.4f}")
+        print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
         print("----------------------------------------------------\n\n")
 
         trial.report(accuracy, epoch)
@@ -263,11 +245,21 @@ def objective(trial):
 # ---- Hyperparameter tuning ---- #
 # # # # # # # # # # # # # # # # # #
 
-study = optuna.create_study(direction="maximize", 
-                            pruner=optuna.pruners.PatientPruner(optuna.pruners.MedianPruner(
-                                    n_startup_trials=5, n_warmup_steps=30, interval_steps=10), patience=2)
+sampler = TPESampler(seed=123)
+
+
+optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
+study_name = "studyCGCN4_06_10_25"  # Unique identifier of the study.
+storage_name = "sqlite:///{}.db".format(study_name)
+study = optuna.create_study(
+                            direction="maximize", 
+                            sampler=sampler,
+                            pruner=optuna.pruners.PatientPruner(wrapped_pruner=None, patience=5, min_delta=0.0),
+                            study_name=study_name,
+                            storage=storage_name
                             )
-study.optimize(objective, n_trials=300, timeout=600)
+
+study.optimize(objective, n_trials=150, timeout=None)
 
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
 complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])

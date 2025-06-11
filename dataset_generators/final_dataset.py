@@ -16,6 +16,47 @@ dataset_config = {
     }
 
 
+"""
+# --- Compare Ad vs As influence ---
+X0, mask = loadDataset(100, attack=True)
+Xd = np.copy(X0)
+    
+# Extract all node features
+P = Xd[:, 0]
+Q = Xd[:, 1]
+
+# Don't follow outliners, so that the attack is not as easy to detect
+# Get mean and STD for 90% of P
+lo, hi = np.percentile(P, [5,95])
+P_trim = P[(P>=lo)&(P<=hi)]
+P_mu, P_std  = P_trim.mean(), P_trim.std() / 4
+
+# Get mean and STD for 90% of Q
+lo, hi = np.percentile(Q, [5,95])
+Q_trim = Q[(Q>=lo)&(Q<=hi)]
+Q_mu, Q_std  = Q_trim.mean(), Q_trim.std() / 4
+
+# Attack buses that have some load only (otherwise => easy to detect)
+mask_P = mask & (P != 0)
+mask_Q = mask & (Q != 0)
+
+# Apply the distribution-based attack on the marked buses
+Xd[mask_P, 0] = np.random.normal(P_mu, P_std, size=mask_P.sum())
+Xd[mask_Q, 1] = np.random.normal(Q_mu, Q_std, size=mask_Q.sum())
+
+print(f"Xd: {np.mean(np.abs(X0-Xd))}")
+
+
+Xs = np.copy(X0)
+Xs[mask, 0] = Xs[mask, 0] * np.random.uniform(0.9, 1.1, size=mask.sum())
+Xs[mask, 1] = Xs[mask, 1] * np.random.uniform(0.9, 1.1, size=mask.sum())
+print(f"Xs: {np.mean(np.abs(X0-Xs))}")
+
+sys.exit()
+"""
+
+
+
 if( dataset_config["normal_scaling"] ):
     # -- Prepare normal scaling --
     # Define initial mins and maxs
@@ -60,13 +101,28 @@ for i in range(9000):
   # - Ad data subset -
   print("Ad attack chosen")
       
-  # Extract the node features to be attacked
+  # Extract all node features
   P = X[:, 0]
   Q = X[:, 1]
 
+  # Don't follow outliners, so that the attack is not as easy to detect
+  # Get mean and STD for 90% of P
+  lo, hi = np.percentile(P, [5,95])
+  P_trim = P[(P>=lo)&(P<=hi)]
+  P_mu, P_std  = P_trim.mean(), P_trim.std() / 4
+  
+  # Get mean and STD for 90% of Q
+  lo, hi = np.percentile(Q, [5,95])
+  Q_trim = Q[(Q>=lo)&(Q<=hi)]
+  Q_mu, Q_std  = Q_trim.mean(), Q_trim.std() / 4
+  
+  # Attack buses that have some load only (otherwise => easy to detect)
+  mask_P = mask & (P != 0)
+  mask_Q = mask & (Q != 0)
+
   # Apply the distribution-based attack on the marked buses
-  X[mask, 0] = np.random.normal(np.mean(P), np.std(P), size=mask.sum())
-  X[mask, 1] = np.random.normal(np.mean(Q), np.std(Q), size=mask.sum())
+  X[mask_P, 0] = np.random.normal(P_mu, P_std, size=mask_P.sum())
+  X[mask_Q, 1] = np.random.normal(Q_mu, Q_std, size=mask_Q.sum())
   
   # Exclude Voltage magnitude and angle
   X = X[:, :2]
