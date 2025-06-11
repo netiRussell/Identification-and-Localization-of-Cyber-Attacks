@@ -269,7 +269,6 @@ def validate(valid_loader):
     
         # Metrics
         precision = precision_score(all_targets, all_preds, zero_division=0, average="micro")
-        accuracy  = (all_preds == all_targets).mean() * 100
         
         # Number of elements in metrices (used to get mean)
         n_elem_metrices = len(valid_loader)

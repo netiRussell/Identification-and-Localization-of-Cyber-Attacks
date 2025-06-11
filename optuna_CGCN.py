@@ -227,7 +227,7 @@ def objective(trial):
         train_loss = train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader)
         prec, rec, f1, accuracy, FA, avg_loss = validate(model, valid_loader)
         
-        print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f},")
+        print(f"\nEpoch#{epoch}, Trial#{trial.number}, Average Train Loss={train_loss:.4f},")
         print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f},")
         print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
         print("----------------------------------------------------\n\n")
@@ -238,7 +238,7 @@ def objective(trial):
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
 
-    return accuracys
+    return accuracy
 
 
 # # # # # # # # # # # # # # # # # #
@@ -254,7 +254,7 @@ storage_name = "sqlite:///{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 
                             sampler=sampler,
-                            pruner=optuna.pruners.PatientPruner(wrapped_pruner=None, patience=10, min_delta=0.0),
+                            pruner=optuna.pruners.PatientPruner(wrapped_pruner=None, patience=5, min_delta=0.0),
                             study_name=study_name,
                             storage=storage_name
                             )

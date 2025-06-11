@@ -71,7 +71,7 @@ config = {
               
               "num_nodes": 2848,
               "u": 64, # hidden channels
-              "Ks": 7,
+              "Ks": 6,
               "dropout": 0.4,
               
               "transformer_layers": 6,

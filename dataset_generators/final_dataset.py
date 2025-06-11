@@ -25,10 +25,6 @@ Xd = np.copy(X0)
 P = Xd[:, 0]
 Q = Xd[:, 1]
 
-# Get nodes that will be attacked
-P_tobe_attacked = Xd[mask, 0]
-Q_tobe_attacked = Xd[mask, 1]
-
 # Don't follow outliners, so that the attack is not as easy to detect
 # Get mean and STD for 90% of P
 lo, hi = np.percentile(P, [5,95])
@@ -108,10 +104,6 @@ for i in range(9000):
   # Extract all node features
   P = X[:, 0]
   Q = X[:, 1]
-
-  # Get nodes that will be attacked
-  P_tobe_attacked = X[mask, 0]
-  Q_tobe_attacked = X[mask, 1]
 
   # Don't follow outliners, so that the attack is not as easy to detect
   # Get mean and STD for 90% of P
