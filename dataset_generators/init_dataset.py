@@ -23,67 +23,44 @@ Together, these loads determine the apparent power (S)
 # TODO: delete after debugging is fully complete.
 import sys
 
-def singleCycle( net ):
-    
-    # -- Scale the load -- 
-    df = net["load"]
-    
+def singleCycle( net, nodelist ):
     # Scale factor
     sf = np.random.uniform(0.8, 1.2)
-
+    
+    # -- Scale the load -- 
     # Scale active power
-    df["p_mw"] *= sf
+    net.load["p_mw"] *= sf
 
     # Scale reactive power
-    df["q_mvar"] *= sf
+    net.load["q_mvar"] *= sf
     
     # -- Scale the generator as well --
-    gen_df = net["gen"]
-    
     # Scale active power
-    gen_df["p_mw"] *= sf
-
+    net.gen["p_mw"] *= sf
 
     # -- Run AC powerflow algorithm --
     pp.runpp(net)
 
+    # 5) Build the measurement matrices
+    meas_line = net.res_line[ ["p_from_mw","q_from_mvar","p_to_mw","q_to_mvar"] ].values
+    meas_bus  = net.res_bus[ ["p_mw","q_mvar","vm_pu","va_degree"] ].values
 
-    # -- Add 1% noise --
-    """
-    p_from_mw - Real (active) power in megawatts (MW) flowing from the “from” bus of the line.
-    q_from_mvar - Reactive power in megavolt-amperes reactive (MVAr) flowing from the “from” bus.
-    p_to_mw - Real power in MW flowing into the “to” bus of the line.
-    q_to_mvar - Reactive power in MVAr flowing into the “to” bus.
-    """
+    # 6) Add 1% relative uniform noise
+    noise_line = np.random.uniform(-0.01,0.01, size=meas_line.shape)
+    noise_bus  = np.random.uniform(-0.01,0.01, size=meas_bus.shape)
 
-    measurements_line = net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]]
-    measurements_bus = net.res_bus[["p_mw", "q_mvar", "vm_pu", "va_degree"]]
-    
-    # Guassian option:
-    #noise_line = np.random.normal(loc=0.0, scale=0.01, size=measurements_line.shape)
-    #noise_bus = np.random.normal(loc=0.0, scale=0.01, size=measurements_bus.shape)
-    
-    # Uniform
-    noise_line = np.random.uniform(-0.01, 0.01, size=measurements_line.shape)
-    noise_bus = np.random.uniform(-0.01, 0.01, size=measurements_bus.shape)
+    net.res_line[ ["p_from_mw","q_from_mvar","p_to_mw","q_to_mvar"] ] += meas_line * noise_line
+    net.res_bus [ ["p_mw","q_mvar","vm_pu","va_degree"]  ] += meas_bus  * noise_bus
 
-    net.res_line[["p_from_mw", "q_from_mvar", "p_to_mw", "q_to_mvar"]] += measurements_line * noise_line
-    net.res_bus[["p_mw", "q_mvar", "vm_pu", "va_degree"]] += measurements_bus * noise_bus
-
-
-
-
-    # -- Turn the net into a graph --
-    # Generate the graph
-    G = pptop.create_nxgraph(
-        net,
+    # Turn the current net into a NetworkX graph with ohm‐weights
+    G = pptop.create_nxgraph(net,
         respect_switches=False,
         include_impedances=True,
         calc_branch_impedances=True,
         branch_impedance_unit="ohm"
     )
 
-    # Add the needed attributed to each bus
+    # Copy bus‐measurements into node attributes
     for b in G.nodes():
         r = net.res_bus.loc[b]
         G.nodes[b].update({
@@ -102,14 +79,13 @@ def singleCycle( net ):
     plt.title("Pandapower Network as Graph")
     plt.show()
     """
-
-    # Extract the node values(P,Q,V,theta)
-    attrs = ["p_mw", "q_mvar", "vm_pu", "va_degree"]
-    X = np.array([
-        [G.nodes[n][key] for key in attrs]
-        for n in list(G.nodes())
+    
+    # Extract X in bus‐index order
+    attrs = ["p_mw","q_mvar","vm_pu","va_degree"]
+    X = np.vstack([
+        [ G.nodes[n][k] for k in attrs ]
+        for n in nodelist
     ])
-
     return X
 
 
@@ -131,8 +107,11 @@ G = pptop.create_nxgraph(
     branch_impedance_unit="ohm"
 )
 
+# -- Sort the nodes to make sure node-order is consistent --
+nodelist = sorted(G.nodes())
+
 # -- Extract the weighted adjacency matrix -- 
-W_mat = nx.to_numpy_array(G, weight="z_ohm")
+W_mat = nx.to_numpy_array(G, nodelist=nodelist, weight="z_ohm")
 
 # -- Collect direct neighbors of each node for the future use of BFS --
 neighbors = [
@@ -167,8 +146,8 @@ for i in range(36000):
 
     # Copy the initial network and
     # get the network data
-    net_copy = copy.deepcopy(net)
-    X = singleCycle( net_copy )
+    net_copy = copy.deepcopy( net )
+    X = singleCycle( net_copy, nodelist )
 
 
     # -- Save the data subsets --

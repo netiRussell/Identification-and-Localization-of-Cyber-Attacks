@@ -22,7 +22,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "checkpoint2025_06_00.pth.tar"
+    "checkpoint_name": "checkpoint2025_06_11.pth.tar"
     }
 
 
@@ -57,6 +57,8 @@ model.eval()
 strict_correct = 0
 total   = len(test_loader)
 
+visualizeLossValid(checkpoint["fa"], checkpoint["rec"], checkpoint["f1"], checkpoint["accuracies"])
+
 for sample_id, sample in enumerate(test_loader):
     sample = sample.to(device)
     _, logits = model(sample.x, sample.edge_index, weights=sample.edge_attr, batch=sample.batch)
@@ -75,6 +77,4 @@ for sample_id, sample in enumerate(test_loader):
         strict_correct +=1
 
 print(f"Test score: {((strict_correct / total) * 100):.2f}%")
-
-visualizeLossValid(checkpoint["fa"], checkpoint["rec"], checkpoint["f1"], checkpoint["accuracies"])
 

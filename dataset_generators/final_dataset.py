@@ -29,12 +29,12 @@ Q = Xd[:, 1]
 # Get mean and STD for 90% of P
 lo, hi = np.percentile(P, [5,95])
 P_trim = P[(P>=lo)&(P<=hi)]
-P_mu, P_std  = P_trim.mean(), P_trim.std() / 4
+P_mu, P_std  = P_trim.mean(), P_trim.std()
 
 # Get mean and STD for 90% of Q
 lo, hi = np.percentile(Q, [5,95])
 Q_trim = Q[(Q>=lo)&(Q<=hi)]
-Q_mu, Q_std  = Q_trim.mean(), Q_trim.std() / 4
+Q_mu, Q_std  = Q_trim.mean(), Q_trim.std()
 
 # Attack buses that have some load only (otherwise => easy to detect)
 mask_P = mask & (P != 0)
@@ -48,13 +48,12 @@ print(f"Xd: {np.mean(np.abs(X0-Xd))}")
 
 
 Xs = np.copy(X0)
-Xs[mask, 0] = Xs[mask, 0] * np.random.uniform(0.9, 1.1, size=mask.sum())
-Xs[mask, 1] = Xs[mask, 1] * np.random.uniform(0.9, 1.1, size=mask.sum())
+Xs[mask, 0] = Xs[mask, 0] * np.random.uniform(0.8, 1.2, size=mask.sum())
+Xs[mask, 1] = Xs[mask, 1] * np.random.uniform(0.8, 1.2, size=mask.sum())
 print(f"Xs: {np.mean(np.abs(X0-Xs))}")
 
 sys.exit()
 """
-
 
 
 if( dataset_config["normal_scaling"] ):
@@ -109,12 +108,12 @@ for i in range(9000):
   # Get mean and STD for 90% of P
   lo, hi = np.percentile(P, [5,95])
   P_trim = P[(P>=lo)&(P<=hi)]
-  P_mu, P_std  = P_trim.mean(), P_trim.std() / 4
+  P_mu, P_std  = P_trim.mean(), P_trim.std()
   
   # Get mean and STD for 90% of Q
   lo, hi = np.percentile(Q, [5,95])
   Q_trim = Q[(Q>=lo)&(Q<=hi)]
-  Q_mu, Q_std  = Q_trim.mean(), Q_trim.std() / 4
+  Q_mu, Q_std  = Q_trim.mean(), Q_trim.std()
   
   # Attack buses that have some load only (otherwise => easy to detect)
   mask_P = mask & (P != 0)
@@ -149,8 +148,8 @@ for i in range(9000, 18000):
   print("As attack chosen")
     
   # Apply the scale-based attack on the marked buses
-  X[mask, 0] = X[mask, 0] * np.random.uniform(0.9, 1.1, size=mask.sum())
-  X[mask, 1] = X[mask, 1] * np.random.uniform(0.9, 1.1, size=mask.sum())
+  X[mask, 0] = X[mask, 0] * np.random.uniform(0.8, 1.2, size=mask.sum())
+  X[mask, 1] = X[mask, 1] * np.random.uniform(0.8, 1.2, size=mask.sum())
   
   # Exclude Voltage magnitude and angle
   X = X[:, :2]
