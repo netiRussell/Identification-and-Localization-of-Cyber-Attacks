@@ -89,12 +89,11 @@ def loadDataset( i, attack=False ):
     buses_tobe_attacked = _bfs(root, num_buses_tobe_attacked, neighbors)
     
     # TODO: make sure that all the picked buses are actually connected
-    """
     print(buses_tobe_attacked)
     edges = np.load("../init_dataset/edge_indices.npy", allow_pickle = True).tolist()
     print(edges)
     sys.exit()
-    """
+    
 
     # Fill mask with the output of bfs
     mask[buses_tobe_attacked] = True
@@ -349,7 +348,7 @@ Runs vanilla BFS algorithm
 def _bfs(root, k, neighbors):
   visited = {root}
   q = deque([root])
-  out = []
+  out = [root]
 
   while q and len(out) < k:
     u = q.popleft()
