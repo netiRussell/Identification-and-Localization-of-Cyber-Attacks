@@ -9,3 +9,4 @@ __pycache__/
 /results
 study06_10_25.db
 *.db
+./saved_Optuna

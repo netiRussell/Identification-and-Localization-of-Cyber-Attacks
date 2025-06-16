@@ -83,7 +83,7 @@ def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
     
     # Declare default value for loss and # of batches(steps) for grad accumulation
     total_loss = 0
-    accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
+    accum_steps = 16 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
     
     # Reset accumulated grads
     optimizer.zero_grad()
@@ -294,8 +294,8 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "studyARMA2_06_10_25"  # Unique identifier of the study.
-storage_name = "sqlite:///{}.db".format(study_name)
+study_name = "studyARMA_06_14_25"  # Unique identifier of the study.
+storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 
                             sampler=sampler,
