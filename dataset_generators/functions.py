@@ -87,6 +87,14 @@ def loadDataset( i, attack=False ):
 
     # Find buses connected to the root with bfs 
     buses_tobe_attacked = _bfs(root, num_buses_tobe_attacked, neighbors)
+    
+    # TODO: make sure that all the picked buses are actually connected
+    """
+    print(buses_tobe_attacked)
+    edges = np.load("../init_dataset/edge_indices.npy", allow_pickle = True).tolist()
+    print(edges)
+    sys.exit()
+    """
 
     # Fill mask with the output of bfs
     mask[buses_tobe_attacked] = True

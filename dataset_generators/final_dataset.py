@@ -55,7 +55,6 @@ print(f"Xs: {np.mean(np.abs(X0-Xs))}")
 sys.exit()
 """
 
-
 if( dataset_config["normal_scaling"] ):
     # -- Prepare normal scaling --
     # Define initial mins and maxs
