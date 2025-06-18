@@ -4,9 +4,12 @@
 /As_dataset
 __pycache__/
 **/__pycache__/
+csv
+**/csv
 /dataset
 /saved_grads
 /results
 study06_10_25.db
 *.db
 ./saved_Optuna
+IEEE_cases
