@@ -53,9 +53,6 @@ config = {
               "num_layers": 8,
               "dropout": 0.3, 
               "num_nodes": 2848,
-              
-              "transformer_layers": 6,
-              "transformer_heads": 8
           }
 
 # -- Prepare the dataset --

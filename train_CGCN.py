@@ -70,12 +70,9 @@ config = {
               "norm_test": 3000,
               
               "num_nodes": 2848,
-              "u": 64, # hidden channels
-              "Ks": 6,
-              "dropout": 0.4,
-              
-              "transformer_layers": 6,
-              "transformer_heads": 8
+              "u": 32, # hidden channels
+              "Ks": 5,
+              "dropout": 0.5,
           }
 
 

@@ -51,9 +51,6 @@ config = {
               "u": 32, # hidden channels
               "Ks": 5,
               "dropout": 0.2,
-              
-              "transformer_layers": 6,
-              "transformer_heads": 8
           }
 
 # -- Prepare the dataset --
