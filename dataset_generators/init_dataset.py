@@ -7,6 +7,7 @@ import networkx as nx
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 import copy
+import itertools
 
 # Should I scale both react and act power with the same scaling factor?
 # How to get IEEE bus systems?
@@ -34,6 +35,19 @@ Together, these loads determine the apparent power (S)
 
 # TODO: delete after debugging is fully complete.
 import sys
+
+# Surpress the warnings:
+import logging
+import warnings
+
+logging.getLogger("pandapower").setLevel(logging.WARNING)
+logging.getLogger().setLevel(logging.INFO)
+warnings.filterwarnings(
+    "ignore",
+    message="invalid value encountered in divide",
+    module="pandapower.pypower.dIbr_dV"
+)
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 def scalerGenerator():
     # -- Scaler generation --
@@ -99,7 +113,7 @@ def run_psse(net, z, sigma_n, nodelist):
         estimate(
             net,
             algorithm="wls",
-            init="results",
+            init="flat",
             tolerance=1e-6,
             maximum_iterations=20,
             calculate_voltage_angles=True
@@ -108,12 +122,17 @@ def run_psse(net, z, sigma_n, nodelist):
         #print(f"The estimation didn't converge! {e}")
         return None
 
-    # Build estimated feature matrix
-    res = net.res_bus_est.sort_index()
-    x = np.vstack([
-        res.loc[bus, ["p_mw", "q_mvar", "vm_pu", "va_degree"]].values
-        for bus in nodelist
-    ])
+    # Build estimated feature matrix    
+    cols = ["p_mw", "q_mvar", "vm_pu", "va_degree"]
+    # reindex the estimator result to exactly nodelist (will insert NaNs for missing buses)
+    est = net.res_bus_est.reindex(nodelist)
+    # reindex the full power‐flow result
+    pf  = net.res_bus.reindex(nodelist)
+    # fill any NaNs in est with the pf values
+    filled = est.fillna(pf)
+    # now every bus is present, in order
+    x = filled[cols].values   # shape (len(nodelist), 4)
+
     return x
 
 # Function for a single time-step generation
@@ -129,10 +148,12 @@ def generate(net, S_t, G, nodelist, base_p, base_q):
     net.load["p_mw"] = base_p * sf
     net.load["q_mvar"] = base_q * sf
     
+    #pp.diagnostic(net, report_style="detailed", warnings_only=False)
+    
     # Run the AC powerflow algorithm
     # If it doesn't converge, skip this timestep
     try:
-        pp.runpp(net, init="results")
+        pp.runpp(net, init="flat", max_iteration=25, tolerance_mva=1e-6)
     except Exception as e:
         #print(f"The AC pf didn't converge! {e}")
         return None, None
@@ -164,19 +185,18 @@ def generate(net, S_t, G, nodelist, base_p, base_q):
 
 
 
-def worker(t):
+def worker(t, G, nodelist):
     # each worker builds its own IEEE-300 net
-    net  = pn.case300()
-    pp.runpp(net)
-    G    = pptop.create_nxgraph(net,
-                respect_switches=False,
-                include_impedances=True,
-                calc_branch_impedances=True,
-                branch_impedance_unit="ohm")
-    nodelist = sorted(G.nodes())
+    net  = pn.case300()# right after net = pn.case300()
+    
+    # Copy active and reactive powers to reuse them later
     base_p   = net.load["p_mw"].values.copy()
     base_q   = net.load["q_mvar"].values.copy()
 
+    # Run the powerflow alogirthm
+    pp.runpp(net)
+    
+    # Generate samples
     z, x = generate(net, S[t], G, nodelist, base_p, base_q)
     if z is None or x is None:
         return None
@@ -188,8 +208,6 @@ def worker(t):
 # # # # # # # # # # # #
 # -- Select network --
 net = N["300"]
-base_p  = net.load["p_mw"].values.copy()
-base_q  = net.load["q_mvar"].values.copy()
 
 # -- Run the AC powerflow algorithm to generate the Y bus --
 pp.runpp(net)
@@ -210,10 +228,10 @@ weights = W[rows, cols]                   # shape [E]
 
 # -- Save the net structure as edge indices and correpsonding weights  --
 np.save("../init_dataset/edge_indices", edge_indices)
-np.save("../dataset/edge_indices", edge_indices)
+np.save("../final_dataset/edge_indices", edge_indices)
 
 np.save("../init_dataset/weights", weights)
-np.save("../dataset/weights", weights)
+np.save("../final_dataset/weights", weights)
 
 # -- Turn the net into a graph --
 G = pptop.create_nxgraph(
@@ -243,13 +261,14 @@ np.save("../init_dataset/neighbors", np.array(neighbors, dtype=object))
 # -- For L timesteps, generate a sample --
 if __name__ == "__main__":
     idx = 1
-    with ProcessPoolExecutor(max_workers=6) as exe:
+    with ProcessPoolExecutor(max_workers=12) as exe:
         # map ensures all 36 000 t’s are processed in parallel
-        for result in exe.map(worker, range(len(S))):
+        for result in exe.map(worker, range(len(S)), itertools.repeat(G), itertools.repeat(nodelist) ):
             if result is None:
                 continue
             z, x = result
-            print(f"Generated sample {idx}")
+            
+            # Save the converged sample
             np.save(f"../init_dataset/Z_{idx}.npy", z)
             np.save(f"../init_dataset/X_{idx}.npy", x)
             idx += 1
@@ -336,10 +355,10 @@ weights = W[rows, cols]                   # shape [E]
 
 # -- Save the net structure as edge indices and correpsonding weights  --
 np.save("../init_dataset/edge_indices", edge_indices)
-np.save("../dataset/edge_indices", edge_indices)
+np.save("../final_dataset/edge_indices", edge_indices)
 
 np.save("../init_dataset/weights", weights)
-np.save("../dataset/weights", weights)
+np.save("../final_dataset/weights", weights)
 
 # -- Turn the net into a graph --
 G = pptop.create_nxgraph(

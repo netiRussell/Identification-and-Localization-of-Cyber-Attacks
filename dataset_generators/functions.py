@@ -38,8 +38,8 @@ def saveNetwork( X, target, i):
   -------
     None
   """
-  np.save(f"../dataset/x_{i}", X)
-  np.save(f"../dataset/target_{i}", target)
+  np.save(f"../final_dataset/x_{i}", X)
+  np.save(f"../final_dataset/target_{i}", target)
 
 
 
