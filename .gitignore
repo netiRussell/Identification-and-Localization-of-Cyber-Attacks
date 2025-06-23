@@ -10,3 +10,4 @@ __pycache__/
 study06_10_25.db
 *.db
 ./saved_Optuna
+/final_dataset
