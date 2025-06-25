@@ -18,13 +18,13 @@ torch.cuda.manual_seed(123)
 np.random.seed(123)
 
 
-def saveNetwork( X, target, i):
+def saveNetwork( Z, target, i):
   """
   Saves the network into a Ad(or As)_dataset folder
 
   Parameters:
   ----------
-  X : NumPy array filled with float values
+  Z : NumPy array filled with float values
     Node features array
     
   target: a NumPy array filled with integers
@@ -38,7 +38,7 @@ def saveNetwork( X, target, i):
   -------
     None
   """
-  np.save(f"../final_dataset/x_{i}", X)
+  np.save(f"../final_dataset/Z_{i}", Z)
   np.save(f"../final_dataset/target_{i}", target)
 
 
@@ -60,14 +60,14 @@ def loadDataset( i, attack=False, number_nodes=300 ):
 
   Returns:
   -------
-  X : NumPy array filled with float values
+  Z : NumPy array filled with float values
     Node features array
 
   mask : NumPy array filled with boolean values
     Boolean mask used to selectively modify only the rows of data corresponding to True values in it
   """
   # X = Node features array
-  X = np.load(f"../init_dataset/X_{i}.npy")
+  Z = np.load(f"../init_dataset/Z_{i}.npy")
 
   # Declare and Define with default values mask and num of buses to be attacked
   num_buses_tobe_attacked = 0
@@ -92,7 +92,7 @@ def loadDataset( i, attack=False, number_nodes=300 ):
     mask[buses_tobe_attacked] = True
 
 
-  return X, mask
+  return Z, mask
 
 
 def save_checkpoint(state, path='./saved_grads/'):

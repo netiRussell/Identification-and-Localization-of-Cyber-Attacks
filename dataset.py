@@ -43,7 +43,7 @@ class FDIADataset(torch.utils.data.Dataset):
         i = self.indices[idx]
         
         # Retreive the nodes
-        x = torch.tensor(np.load(os.path.join(self.root, f"X_{i}.npy")),
+        x = torch.tensor(np.load(os.path.join(self.root, f"Z_{i}.npy")),
                          dtype=torch.float)
         
         # Get raw target with both node-level and graph-level labels
