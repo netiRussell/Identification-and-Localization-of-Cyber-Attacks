@@ -9,14 +9,17 @@ from concurrent.futures import ProcessPoolExecutor
 import copy
 import itertools
 
-# Should I scale both react and act power with the same scaling factor?
-# How to get IEEE bus systems?
-# Is it ok to use absolute value for the std when conducting 1% additive noise: scale=abs(z * sigma_n)
+# Should I scale both react and act power with the same scaling factor? Yes
+# sigma_s is ^2 in the paper. Is it just notation or should I square it as well? Yes
+# Is it ok to use absolute value for the std when conducting 1% additive noise: scale=abs(z * sigma_n) Yes
 # Is my PSSE function correct, is flat(sets 1.0 p.u. / 0° for all buses) a good values for init?
     # Is it ok to use WLS as the algorithm for PSSE?
     # Is it ok to use std=abs(p)*sigma_n when creating measurements?
 # For some samples, AC powerflow alg doesn't converge, is that normal?
-# Are you sure X is used as node features? In the papers, attack targets Z0
+# Are you sure X is used as node features? In the papers, attack targets Z0. Z for all!
+# For data-replay attack, what is the value for Tau? 4
+
+# ! Should I substitute PSSE from pandapower with the formula from the paper?
 
 """
 Each transmission line or branch connects two buses:
@@ -136,17 +139,22 @@ def run_psse(net, z, sigma_n, nodelist):
     return x
 
 # Function for a single time-step generation
-def generate(net, S_t, G, nodelist, base_p, base_q):
+def generate(net, S_t, G, nodelist, originals):
     # Generate the scale factor
-    sf = np.random.normal(loc=(1 + k * S_t), scale=sigma_s, size=len(net.load.index))
+    all_buses = np.unique(np.concatenate([originals["load_buses"], originals["gen_buses"]]))
+    sfbus = np.random.normal(1 + k*S_t, sigma_s, size=len(all_buses))
     # Bound sf within 0.7 and 1.3
-    sf = np.where(sf > 1.3, 1.3, sf)
-    sf = np.where(sf < 0.7, 0.7, sf)
+    sfbus = np.clip(sfbus, 0.7, 1.3)
+    bus2sf = dict(zip(all_buses, sfbus))
     
 
-    # Scale the buses
-    net.load["p_mw"] = base_p * sf
-    net.load["q_mvar"] = base_q * sf
+    # Scale the buses and generator
+    load_sf = [bus2sf[b] for b in originals["load_buses"]]
+    net.load["p_mw"]  = originals["base_load_p"] * load_sf
+    net.load["q_mvar"]= originals["base_load_q"] * load_sf
+    
+    gen_sf = [bus2sf[b] for b in originals["gen_buses"]]
+    net.gen["p_mw"]  = originals["base_gen_p"] * gen_sf
     
     #pp.diagnostic(net, report_style="detailed", warnings_only=False)
     
@@ -189,15 +197,20 @@ def worker(t, G, nodelist):
     # each worker builds its own IEEE-300 net
     net  = pn.case300()# right after net = pn.case300()
     
-    # Copy active and reactive powers to reuse them later
-    base_p   = net.load["p_mw"].values.copy()
-    base_q   = net.load["q_mvar"].values.copy()
-
-    # Run the powerflow alogirthm
+    # Copy generator, active and reactive powers to reuse them later
+    originals = {
+        "base_load_p": net.load["p_mw"].values.copy(),
+        "base_load_q": net.load["q_mvar"].values.copy(),
+        "base_gen_p": net.gen ["p_mw"].values.copy(),
+        "load_buses": net.load["bus"].values,
+        "gen_buses": net.gen ["bus"].values
+    }
+    
+    # Run the AC powerflow algorithm on the plain net
     pp.runpp(net)
     
     # Generate samples
-    z, x = generate(net, S[t], G, nodelist, base_p, base_q)
+    z, x = generate(net, S[t], G, nodelist, originals)
     if z is None or x is None:
         return None
     return z, x

@@ -43,7 +43,7 @@ def saveNetwork( X, target, i):
 
 
 
-def loadDataset( i, attack=False ):
+def loadDataset( i, attack=False, number_nodes=300 ):
   """
   Loads the network and randomly decides if the network will be attacked.
   Then, creates a boolean mask to attack random buses
@@ -67,23 +67,23 @@ def loadDataset( i, attack=False ):
     Boolean mask used to selectively modify only the rows of data corresponding to True values in it
   """
   # X = Node features array
-  X = np.load(f"../init_dataset/x{i}.npy")
+  X = np.load(f"../init_dataset/X_{i}.npy")
 
   # Declare and Define with default values mask and num of buses to be attacked
   num_buses_tobe_attacked = 0
-  mask = np.full(2848, False, dtype="bool")
+  mask = np.full(number_nodes, False, dtype="bool")
 
   if(attack == True):
     print("There will be an attack")
     
     # Randomly pick number of buses to be attacked between 5-10% of the buses
-    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.10) * 2848)
+    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.10) * number_nodes)
 
     # Load direct neighbors of each node
     neighbors = np.load("../init_dataset/neighbors.npy", allow_pickle = True).tolist()
     
     # Randomly pick the root bus around which the attack will take place
-    root = np.random.randint(0, 2848)
+    root = np.random.randint(0, number_nodes)
 
     # Find buses connected to the root with bfs 
     buses_tobe_attacked = _bfs(root, num_buses_tobe_attacked, neighbors)
