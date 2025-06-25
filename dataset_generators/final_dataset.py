@@ -10,6 +10,7 @@ import networkx as nx
 import copy
 from scipy.optimize import minimize
 from types import SimpleNamespace
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Implemented functions
 from functions import saveNetwork, loadDataset, selectDevice
@@ -28,8 +29,6 @@ TODOs:
     - Lz might not affect the loss because measurement_model is is not differentiable
     - Make sure that 0-inj and generator buses are disregarded while T_x representing a single "island"
     
-    - Use Z for all the final dataset samples
-    - Parallel generation
     - Generate dataset
     - Adapt dataset loading function
     - Start a new training
@@ -278,10 +277,12 @@ def step_Ao( attacker, z0, x_hat, net, t):
     y = np.zeros_like(x_hat_phasor, dtype=int)
     y[T_x] = 1
     
+    """
     print(loss)
     if loss > TAU_LOSS:
         # TODO: implement attack rerun
         print(f"[WARNING]: Sample #{t} didn't go below TAU_LOSS by {loss - TAU_LOSS}")
+    """
     
     """
     # Copy the net
@@ -305,28 +306,44 @@ def step_Ao( attacker, z0, x_hat, net, t):
         
     return z, x_est, y
 
-def generate_Ao(start_id, finish_id):
+
+def worker(t):
     # IEEE300 network
     net = pn.case300()
     attacker = Attacker_Ao(net)
 
-    for t in range(start_id, finish_id):
-        print(f"Current cycle: #{t}")
-        print("Ao attack chosen")
-        
-        # Input holders
-        z0 = np.load(f"../init_dataset/Z_{t}.npy")
-        x_hat = np.load(f"../init_dataset/Z_{t}.npy")
-        
-        # Flatten z0 for future calculations
-        z0 = z0.flatten()
-        
-        z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t)
-        
-        # Save current attacked sample
-        np.save(f'../final_dataset/Z_{t}.npy', z_att)
-        #np.save(f'../final_dataset/X_{t}.npy', x_est)
-        np.save(f'../final_dataset/target_{t}.npy', y)
+    # Input holders
+    z0 = np.load(f"../init_dataset/Z_{t}.npy")
+    x_hat = np.load(f"../init_dataset/Z_{t}.npy")
+    
+    # Flatten z0 for future calculations
+    z0 = z0.flatten()
+    
+    z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t)
+    
+    # Save current attacked sample
+    np.save(f'../final_dataset/Z_{t}.npy', z_att)
+    #np.save(f'../final_dataset/X_{t}.npy', x_est)
+    np.save(f'../final_dataset/target_{t}.npy', y)
+    
+    return t  # for tracking progress
+
+
+def generate_Ao(start_id, finish_id, max_workers=12):
+    
+    with ProcessPoolExecutor(max_workers=max_workers) as exe:
+        futures = {
+            exe.submit(worker, t): t
+            for t in range(start_id, finish_id)
+        }
+        for fut in as_completed(futures):
+            print("Ao attack chosen")
+            t = futures[fut]
+            try:
+                _ = fut.result()
+                print(f"Current cycle: #{t}")
+            except Exception as e:
+                print(f"[✗] Error on sample {t}: {e}")
 
 
 def generate_Ad(t):
