@@ -18,13 +18,13 @@ torch.cuda.manual_seed(123)
 np.random.seed(123)
 
 
-def saveNetwork( X, target, i):
+def saveNetwork( Z, target, i):
   """
   Saves the network into a Ad(or As)_dataset folder
 
   Parameters:
   ----------
-  X : NumPy array filled with float values
+  Z : NumPy array filled with float values
     Node features array
     
   target: a NumPy array filled with integers
@@ -38,12 +38,12 @@ def saveNetwork( X, target, i):
   -------
     None
   """
-  np.save(f"../dataset/x_{i}", X)
-  np.save(f"../dataset/target_{i}", target)
+  np.save(f"../final_dataset/Z_{i}", Z)
+  np.save(f"../final_dataset/target_{i}", target)
 
 
 
-def loadDataset( i, attack=False ):
+def loadDataset( i, attack=False, number_nodes=300 ):
   """
   Loads the network and randomly decides if the network will be attacked.
   Then, creates a boolean mask to attack random buses
@@ -60,46 +60,39 @@ def loadDataset( i, attack=False ):
 
   Returns:
   -------
-  X : NumPy array filled with float values
+  Z : NumPy array filled with float values
     Node features array
 
   mask : NumPy array filled with boolean values
     Boolean mask used to selectively modify only the rows of data corresponding to True values in it
   """
   # X = Node features array
-  X = np.load(f"../init_dataset/x{i}.npy")
+  Z = np.load(f"../init_dataset/Z_{i}.npy")
 
   # Declare and Define with default values mask and num of buses to be attacked
   num_buses_tobe_attacked = 0
-  mask = np.full(2848, False, dtype="bool")
+  mask = np.full(number_nodes, False, dtype="bool")
 
   if(attack == True):
     print("There will be an attack")
     
     # Randomly pick number of buses to be attacked between 5-10% of the buses
-    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.10) * 2848)
+    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.10) * number_nodes)
 
     # Load direct neighbors of each node
     neighbors = np.load("../init_dataset/neighbors.npy", allow_pickle = True).tolist()
     
     # Randomly pick the root bus around which the attack will take place
-    root = np.random.randint(0, 2848)
+    root = np.random.randint(0, number_nodes)
 
     # Find buses connected to the root with bfs 
     buses_tobe_attacked = _bfs(root, num_buses_tobe_attacked, neighbors)
-    
-    # TODO: make sure that all the picked buses are actually connected
-    print(buses_tobe_attacked)
-    edges = np.load("../init_dataset/edge_indices.npy", allow_pickle = True).tolist()
-    print(edges)
-    sys.exit()
-    
 
     # Fill mask with the output of bfs
     mask[buses_tobe_attacked] = True
 
 
-  return X, mask
+  return Z, mask
 
 
 def save_checkpoint(state, path='./saved_grads/'):

@@ -24,7 +24,7 @@ import sys
 
 # -- Define the params and hyperparams for tuning --
 config = {
-              "dataset_root": "./dataset",
+              "dataset_root": "./final_dataset",
     
               "num_epochs": 100,
               "batch_size": 4, # 256 with gradient accumulation
@@ -51,9 +51,6 @@ config = {
               "u": 32, # hidden channels
               "Ks": 5,
               "dropout": 0.2,
-              
-              "transformer_layers": 6,
-              "transformer_heads": 8
           }
 
 # -- Prepare the dataset --

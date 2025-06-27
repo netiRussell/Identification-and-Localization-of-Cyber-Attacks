@@ -5,7 +5,21 @@ from pandapower.create import create_measurement
 import pandapower.topology as pptop
 import networkx as nx
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor
 import copy
+import itertools
+
+# Should I scale both react and act power with the same scaling factor? Yes
+# sigma_s is ^2 in the paper. Is it just notation or should I square it as well? Yes
+# Is it ok to use absolute value for the std when conducting 1% additive noise: scale=abs(z * sigma_n) Yes
+# Is my PSSE function correct, is flat(sets 1.0 p.u. / 0° for all buses) a good values for init?
+    # Is it ok to use WLS as the algorithm for PSSE?
+    # Is it ok to use std=abs(p)*sigma_n when creating measurements?
+# For some samples, AC powerflow alg doesn't converge, is that normal?
+# Are you sure X is used as node features? In the papers, attack targets Z0. Z for all!
+# For data-replay attack, what is the value for Tau? 4
+
+# ! Should I substitute PSSE from pandapower with the formula from the paper?
 
 # Should I scale both react and act power with the same scaling factor?
 # How to get IEEE bus systems?
@@ -162,6 +176,189 @@ net = N["300"]
 base_p  = net.load["p_mw"].values.copy()
 base_q  = net.load["q_mvar"].values.copy()
 
+# Surpress the warnings:
+import logging
+import warnings
+
+logging.getLogger("pandapower").setLevel(logging.WARNING)
+logging.getLogger().setLevel(logging.INFO)
+warnings.filterwarnings(
+    "ignore",
+    message="invalid value encountered in divide",
+    module="pandapower.pypower.dIbr_dV"
+)
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+def scalerGenerator():
+    # -- Scaler generation --
+    import pandas as pd
+    import glob
+    from sklearn.preprocessing import StandardScaler  # or MinMaxScaler
+    
+    # Load & concat
+    files = glob.glob("./csv/*.csv")
+    dfs = []
+    for fn in files:
+        # assume each CSV has columns ["Time Stamp","Load"]
+        df = pd.read_csv(fn, parse_dates=["Time Stamp"], index_col="Time Stamp")
+        dfs.append(df)
+    
+    full = pd.concat(dfs).sort_index()
+    full = full[~full.index.duplicated()]
+    
+    # Resample to 1-min and interpolate
+    #    this will create every minute from start to end
+    full_1min = full.resample("1T").interpolate(method="time")
+    
+    # 3. Fit a scaler
+    loads = full_1min["Load"].values.reshape(-1, 1)
+    scaler = StandardScaler().fit(loads)
+    
+    # Normalize the loads
+    norm_vec = scaler.transform(loads).ravel()
+    
+    # Save the final vector
+    np.save("nyiso_normalized_load.npy", norm_vec)
+
+# -- Initial Configurations --
+# IEEE bus systems
+N = {"14": pn.case14(),
+     "118": pn.case118(),
+     "300": pn.case300()}
+# Number of timesteps
+T = 36000 
+# Scaling coefficients
+k = 0.1
+sigma_s=0.03
+# Noise coefficient
+sigma_n = 0.01
+# Scaling vector
+S = np.load("S.npy")
+
+def run_psse(net, z, sigma_n, nodelist):
+    # Clear old measurements
+    net.measurement = net.measurement.iloc[0:0]
+
+    # Load measurements
+    for idx, bus in enumerate(nodelist):
+        p, q, vm, va = z[idx]
+        create_measurement(net, "p", "bus", p, std_dev=abs(p)*sigma_n, element=bus)
+        create_measurement(net, "q", "bus", q, std_dev=abs(q)*sigma_n, element=bus)
+        create_measurement(net, "v", "bus", vm, std_dev=abs(vm)*sigma_n, element=bus)
+        create_measurement(net, "va", "bus", va, std_dev=abs(va)*sigma_n, element=bus)
+
+    # Run WLS estimation
+    # If it doesn't converge, skip this timestep
+    try:
+        estimate(
+            net,
+            algorithm="wls",
+            init="flat",
+            tolerance=1e-6,
+            maximum_iterations=20,
+            calculate_voltage_angles=True
+        )
+    except Exception as e:
+        #print(f"The estimation didn't converge! {e}")
+        return None
+
+    # Build estimated feature matrix    
+    cols = ["p_mw", "q_mvar", "vm_pu", "va_degree"]
+    # reindex the estimator result to exactly nodelist (will insert NaNs for missing buses)
+    est = net.res_bus_est.reindex(nodelist)
+    # reindex the full power‐flow result
+    pf  = net.res_bus.reindex(nodelist)
+    # fill any NaNs in est with the pf values
+    filled = est.fillna(pf)
+    # now every bus is present, in order
+    x = filled[cols].values   # shape (len(nodelist), 4)
+
+    return x
+
+# Function for a single time-step generation
+def generate(net, S_t, G, nodelist, originals):
+    # Generate the scale factor
+    all_buses = np.unique(np.concatenate([originals["load_buses"], originals["gen_buses"]]))
+    sfbus = np.random.normal(1 + k*S_t, sigma_s, size=len(all_buses))
+    # Bound sf within 0.7 and 1.3
+    sfbus = np.clip(sfbus, 0.7, 1.3)
+    bus2sf = dict(zip(all_buses, sfbus))
+    
+
+    # Scale the buses and generator
+    load_sf = [bus2sf[b] for b in originals["load_buses"]]
+    net.load["p_mw"]  = originals["base_load_p"] * load_sf
+    net.load["q_mvar"]= originals["base_load_q"] * load_sf
+    
+    gen_sf = [bus2sf[b] for b in originals["gen_buses"]]
+    net.gen["p_mw"]  = originals["base_gen_p"] * gen_sf
+    
+    #pp.diagnostic(net, report_style="detailed", warnings_only=False)
+    
+    # Run the AC powerflow algorithm
+    # If it doesn't converge, skip this timestep
+    try:
+        pp.runpp(net, init="flat", max_iteration=25, tolerance_mva=1e-6)
+    except Exception as e:
+        #print(f"The AC pf didn't converge! {e}")
+        return None, None
+
+    # Copy bus‐measurements into node attributes
+    for b in G.nodes():
+        r = net.res_bus.loc[b]
+        G.nodes[b].update({
+            "p_mw":    r["p_mw"],
+            "q_mvar":  r["q_mvar"],
+            "vm_pu":   r["vm_pu"],
+            "va_degree": r["va_degree"]
+        })
+    
+    # Build the measurement matrix; shape: [N, 4]
+    attrs = ["p_mw","q_mvar","vm_pu","va_degree"]
+    z = np.vstack([
+        [ G.nodes[n][k] for k in attrs ]
+        for n in nodelist
+    ])
+
+    # Add 1% relative uniform noise 
+    z = np.random.normal(loc=z, scale=abs(z * sigma_n))
+    
+    # Get estimated state
+    x = run_psse(net, z, sigma_n, nodelist)
+
+    return z, x
+
+
+
+def worker(t, G, nodelist):
+    # each worker builds its own IEEE-300 net
+    net  = pn.case300()# right after net = pn.case300()
+    
+    # Copy generator, active and reactive powers to reuse them later
+    originals = {
+        "base_load_p": net.load["p_mw"].values.copy(),
+        "base_load_q": net.load["q_mvar"].values.copy(),
+        "base_gen_p": net.gen ["p_mw"].values.copy(),
+        "load_buses": net.load["bus"].values,
+        "gen_buses": net.gen ["bus"].values
+    }
+    
+    # Run the AC powerflow algorithm on the plain net
+    pp.runpp(net)
+    
+    # Generate samples
+    z, x = generate(net, S[t], G, nodelist, originals)
+    if z is None or x is None:
+        return None
+    return z, x
+
+
+# # # # # # # # # # # #
+# ---- Main code ---- #
+# # # # # # # # # # # #
+# -- Select network --
+net = N["300"]
+
 # -- Run the AC powerflow algorithm to generate the Y bus --
 pp.runpp(net)
 
@@ -181,10 +378,11 @@ weights = W[rows, cols]                   # shape [E]
 
 # -- Save the net structure as edge indices and correpsonding weights  --
 np.save("../init_dataset/edge_indices", edge_indices)
-np.save("../dataset/edge_indices", edge_indices)
+np.save("../final_dataset/edge_indices", edge_indices)
 
 np.save("../init_dataset/weights", weights)
-np.save("../dataset/weights", weights)
+np.save("../final_dataset/weights", weights)
+
 
 # -- Turn the net into a graph --
 G = pptop.create_nxgraph(
@@ -212,16 +410,21 @@ neighbors = [
 np.save("../init_dataset/neighbors", np.array(neighbors, dtype=object))
 
 # -- For L timesteps, generate a sample --
-L = 36000
-for t in range(L):
-    # work on a fresh copy each iteration
-    net_copy = copy.deepcopy(net)
-    z, x = generate(net_copy, S[t], G, nodelist, base_p, base_q)
-
-    sys.exit()
-    # Save
-    np.save(f"Z_{t}.npy", z)
-    np.save(f"X_{t}.npy", x) # contains None if PSSE had an error
+if __name__ == "__main__":
+    idx = 1
+    with ProcessPoolExecutor(max_workers=12) as exe:
+        # map ensures all 36 000 t’s are processed in parallel
+        for result in exe.map(worker, range(len(S)), itertools.repeat(G), itertools.repeat(nodelist) ):
+            if result is None:
+                continue
+            z, x = result
+            
+            # Save the converged sample
+            np.save(f"../init_dataset/Z_{idx}.npy", z)
+            np.save(f"../init_dataset/X_{idx}.npy", x)
+            idx += 1
+    
+    print(f"Done. Saved {idx-1} samples.")
 
 
 
@@ -304,10 +507,10 @@ weights = W[rows, cols]                   # shape [E]
 
 # -- Save the net structure as edge indices and correpsonding weights  --
 np.save("../init_dataset/edge_indices", edge_indices)
-np.save("../dataset/edge_indices", edge_indices)
+np.save("../final_dataset/edge_indices", edge_indices)
 
 np.save("../init_dataset/weights", weights)
-np.save("../dataset/weights", weights)
+np.save("../final_dataset/weights", weights)
 
 # -- Turn the net into a graph --
 G = pptop.create_nxgraph(

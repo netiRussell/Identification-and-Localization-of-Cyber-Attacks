@@ -24,7 +24,7 @@ import sys
 
 # -- Define the params and hyperparams for tuning --
 config = {
-              "dataset_root": "./dataset",
+              "dataset_root": "./final_dataset",
     
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
@@ -53,9 +53,6 @@ config = {
               "num_layers": 8,
               "dropout": 0.3, 
               "num_nodes": 2848,
-              
-              "transformer_layers": 6,
-              "transformer_heads": 8
           }
 
 # -- Prepare the dataset --

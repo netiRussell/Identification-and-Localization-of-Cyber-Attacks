@@ -12,4 +12,5 @@ csv
 study06_10_25.db
 *.db
 ./saved_Optuna
+/final_dataset
 IEEE_cases
