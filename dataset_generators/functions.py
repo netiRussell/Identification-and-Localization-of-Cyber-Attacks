@@ -52,7 +52,7 @@ def loadDataset( i, attack=False, number_nodes=300 ):
   Parameters:
   ----------
   i: Integer
-    Current iteration (i from 0 to 36000)
+    Current iteration
     
   attack: Boolean
       Boolean that represents whether this sample will be attacked

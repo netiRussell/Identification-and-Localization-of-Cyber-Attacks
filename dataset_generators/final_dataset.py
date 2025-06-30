@@ -11,6 +11,9 @@ import copy
 from scipy.optimize import minimize
 from types import SimpleNamespace
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import random
+import os
+import glob
 
 # Implemented functions
 from functions import saveNetwork, loadDataset, selectDevice
@@ -18,27 +21,45 @@ from functions import saveNetwork, loadDataset, selectDevice
 # TODO: to be deleteds
 import sys
 
+"""
+Logic for non-sequential attacks:
+    Every FDIA should not attack the next consequtive timestep to keep the attack more realistic
+    and avoid potential overfitting to a seasonal dataset(By randomizing timestep, we avoid
+                                                          seasonality)
+    Save to the "final_dataset" folder is sequential.
+"""
+
+
 
 """
-- Do I implement the Lz and Lx formulas correctly?
-- Do I need to change active, reactive powers as well in the measurement_model?
-- Is my multi-label supervised training implemented correctly(Generally)?
-
 
 TODOs:
     - Multiple random restarts of attack() if loss > TAU_LOSS
-    - Lz might not affect the loss because measurement_model is is not differentiable
-    - Make sure that 0-inj and generator buses are disregarded while T_x representing a single "island"
-    
-    - Make training work
-    - Make sure y's of Ao have additional element that symbolizes 1/0 target
+    - Lz might not affect the loss because measurement_model is not differentiable
+
+    - Run the training without scaling
+    - Run the training with the scaling
 """
 
 
 dataset_config = {
     "normal_scaling": False,
+    "max_timesteps": 44634,
     "number_nodes": 300
     }
+
+# Create a uniformly shuffled list of numbers from a range 1 to max_timesteps
+timesteps_left = list(range(1, dataset_config["max_timesteps"]))
+random.shuffle(timesteps_left)
+
+def returnTimeStep():
+    return timesteps_left.pop()
+    
+    
+
+
+
+
 
 # Hyperparameters for Ao
 SIGMA_N = 0.005       # initial disturbance variance
@@ -80,7 +101,10 @@ def bfs_attack_surface(net, entry_bus, radius):
     lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
     attacked_buses = list(lengths.keys())
     
-    # Find generator buses: 
+    # Consider all buses
+    all_buses = set(net.bus.index)
+    
+    # Find generator buses
     #    include all synchronous gens, static gens, and the external grid (slack)
     gen_buses = set()
     if hasattr(net, "gen"):
@@ -90,20 +114,18 @@ def bfs_attack_surface(net, entry_bus, radius):
     if hasattr(net, "ext_grid"):
         gen_buses |= set(net.ext_grid.bus.values)
     
-    # Find zero-injection buses:
-    #    any bus that has NO loads, NO gens, NO shunts, NO ext_grid
-    #    (i.e. no “injection” elements attached)
+    # Find buses with some injections
     inj_buses = set()
-    if hasattr(net, "load"):
-        inj_buses |= set(net.load.bus.values)
-    if hasattr(net, "shunt"):
-        inj_buses |= set(net.shunt.bus.values)
-    # include your generator buses too:
-    inj_buses |= gen_buses
+    for attr in ("load", "shunt", "gen", "sgen", "ext_grid"):
+        if hasattr(net, attr):
+            inj_buses |= set(getattr(net, attr).bus.values)
     
-    # Filter out generator and zero-injection buses
-    attacked_buses = [b for b in attacked_buses 
-                      if b not in gen_buses and b not in inj_buses]
+    # Find zero-injection buses: complement of buses with some injections
+    zero_inj_buses = all_buses - inj_buses
+    
+    # Create a mask where 0-injection and generator buses are disregarded
+    remove_buses = gen_buses | zero_inj_buses
+    attacked_buses = [b for b in attacked_buses if b not in remove_buses]
     
     # State indices (one per bus)
     T_x = attacked_buses
@@ -307,66 +329,74 @@ def step_Ao( attacker, z0, x_hat, net, t):
     return z, x_est, y
 
 
-def worker(t):
+def worker_Ao(t_save, t_load):
     # IEEE300 network
     net = pn.case300()
     attacker = Attacker_Ao(net)
 
     # Input holders
-    z0 = np.load(f"../init_dataset/Z_{t}.npy")
-    x_hat = np.load(f"../init_dataset/Z_{t}.npy")
+    z0 = np.load(f"../init_dataset/Z_{t_load}.npy")
+    x_hat = np.load(f"../init_dataset/Z_{t_load}.npy")
     
     # Flatten z0 for future calculations
     z0 = z0.flatten()
     
-    z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t)
+    z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t_save)
     
     # Save current attacked sample
         # Exclude Voltage magnitude and angle
-    
     z_att = z_att.reshape(300, 4)
     z_att = z_att[:, :2]
-    np.save(f'../final_dataset/Z_{t}.npy', z_att)
+    np.save(f'../final_dataset/Z_{t_save}.npy', z_att)
         
-        # Estimeated X
-    #np.save(f'../final_dataset/X_{t}.npy', x_est)
+    # Estimeated X
+    #np.save(f'../final_dataset/X_{t_save}.npy', x_est)
     
         # Attach "attacked" graph-level flag to the target
     y = np.concatenate([y, [1]])
-    np.save(f'../final_dataset/target_{t}.npy', y)
+    np.save(f'../final_dataset/target_{t_save}.npy', y)
     
-    return t  # for tracking progress
+    return t_save  # for tracking progress
 
 
 def generate_Ao(start_id, finish_id, max_workers=12):
     
     # Un-paralleled generation for debugging
     """
-    for t in range(start_id, finish_id):
+    for t_save in range(start_id, finish_id):
         print("Ao attack chosen")
-        worker(t)
-        print(f"Current cycle: #{t}")
-     """   
-        
+        t_load = returnTimeStep()
+        worker_Ao(t_save, t_load)
+        print(f"Current cycle: #{t_save}")
+     """
+    
+    # Prepare timesteps for the parallel execution
+    # ( in order to avoid undefined behavior )
+    jobs = []
+    for t_save in range(start_id, finish_id):
+        t_load = returnTimeStep()
+        #print(len(timesteps_left), t_load)
+        jobs.append((t_save, t_load))
     
     with ProcessPoolExecutor(max_workers=max_workers) as exe:
         futures = {
-            exe.submit(worker, t): t
-            for t in range(start_id, finish_id)
+            exe.submit(worker_Ao, t_save, t_load): t_save
+            for (t_save, t_load) in jobs
         }
         for fut in as_completed(futures):
             print("Ao attack chosen")
-            t = futures[fut]
+            t_save = futures[fut]
             try:
-                _ = fut.result()
-                print(f"Current cycle: #{t}")
+                fut.result()
+                print(f"Current cycle: #{t_save}")
             except Exception as e:
-                print(f"[✗] Error on sample {t}: {e}")
+                print(f"[✗] Error on sample {t_save}: {e}")
 
 
-def generate_Ad(t):
+def generate_Ad(t_save):
     # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask = loadDataset(t, True, dataset_config["number_nodes"])
+    t_load = returnTimeStep()
+    Z, mask = loadDataset(t_load, True, dataset_config["number_nodes"])
   
     # - Ad data subset -
     print("Ad attack chosen")
@@ -396,22 +426,18 @@ def generate_Ad(t):
     
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
-    
-    if( dataset_config["normal_scaling"] ):
-        # Apply normal scaling [0,1]
-        Z[:,0] = (Z[:,0] - P_min) / (P_max - P_min + 1e-8)
-        Z[:,1] = (Z[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
   
     # Generate target(expected output) for multi-label supervised learning
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t)
+    saveNetwork(Z, target, t_save)
 
 
-def generate_As(t):
+def generate_As(t_save):
     # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask = loadDataset(t, True, dataset_config["number_nodes"])
+    t_load = returnTimeStep()
+    Z, mask = loadDataset(t_load, True, dataset_config["number_nodes"])
   
     # - As data subset -
     print("As attack chosen")
@@ -422,22 +448,18 @@ def generate_As(t):
     
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
-    
-    if( dataset_config["normal_scaling"] ):
-        # Apply normal scaling [0,1]
-        Z[:,0] = (Z[:,0] - P_min) / (P_max - P_min + 1e-8)
-        Z[:,1] = (Z[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
   
     # Generate target(expected output) for multi-label supervised learning
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t)
+    saveNetwork(Z, target, t_save)
 
 
-def generate_Ar(t):
+def generate_Ar(t_save):
     # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask = loadDataset(t, True, dataset_config["number_nodes"])
+    t_load = returnTimeStep()
+    Z, mask = loadDataset(t_load, True, dataset_config["number_nodes"])
     
     # Load data TAU steps before
     # [NOTE]: assumes that the current step is grate than tau
@@ -453,17 +475,12 @@ def generate_Ar(t):
     
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
-    
-    if( dataset_config["normal_scaling"] ):
-        # Apply normal scaling [0,1]
-        Z[:,0] = (Z[:,0] - P_min) / (P_max - P_min + 1e-8)
-        Z[:,1] = (Z[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
   
     # Generate target(expected output) for multi-label supervised learning
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t)
+    saveNetwork(Z, target, t_save)
 
 
 def generate_honest(t):
@@ -472,11 +489,6 @@ def generate_honest(t):
     
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
-    
-    if( dataset_config["normal_scaling"] ):
-        # Apply normal scaling [0,1]
-        Z[:,0] = (Z[:,0] - P_min) / (P_max - P_min + 1e-8)
-        Z[:,1] = (Z[:,1] - Q_min) / (Q_max - Q_min + 1e-8)
   
     # Generate target(expected output) for multi-label supervised learning
     target = np.concatenate([mask.astype(int), [0]])
@@ -491,84 +503,7 @@ def generate_honest(t):
 # ---- Main code ---- #
 # # # # # # # # # # # #
 
-
-"""
-# --- Compare Ad vs As influence ---
-Z0, mask = loadDataset(100, True, dataset_config["number_nodes"])
-Zd = np.copy(Z0)
-    
-# Extract all node features
-P = Zd[:, 0]
-Q = Zd[:, 1]
-
-# Don't follow outliners, so that the attack is not as easy to detect
-# Get mean and STD for 90% of P
-lo, hi = np.percentile(P, [5,95])
-P_trim = P[(P>=lo)&(P<=hi)]
-P_mu, P_std  = P_trim.mean(), P_trim.std()
-
-# Get mean and STD for 90% of Q
-lo, hi = np.percentile(Q, [5,95])
-Q_trim = Q[(Q>=lo)&(Q<=hi)]
-Q_mu, Q_std  = Q_trim.mean(), Q_trim.std()
-
-# Attack buses that have some load only (otherwise => easy to detect)
-mask_P = mask & (P != 0)
-mask_Q = mask & (Q != 0)
-
-# Apply the distribution-based attack on the marked buses
-Zd[mask_P, 0] = np.random.normal(P_mu, P_std, size=mask_P.sum())
-Zd[mask_Q, 1] = np.random.normal(Q_mu, Q_std, size=mask_Q.sum())
-
-print(f"Zd: {np.mean(np.abs(Z0-Zd))}")
-
-
-Zs = np.copy(Z0)
-Zs[mask, 0] = Zs[mask, 0] * np.random.uniform(0.8, 1.2, size=mask.sum())
-Zs[mask, 1] = Zs[mask, 1] * np.random.uniform(0.8, 1.2, size=mask.sum())
-print(f"Zs: {np.mean(np.abs(Z0-Zs))}")
-
-sys.exit()
-"""
-
 if __name__ == '__main__':
-    
-    # !---- Get max and min for normal scaling ----!
-    max_num_timesteps = 44634
-    
-    if( dataset_config["normal_scaling"] ):
-        # -- Prepare normal scaling --
-        # Define initial mins and maxs
-        Z0 = np.load(f"../init_dataset/Z_{0}.npy", mmap_mode="r")
-        P_min = Z0[:, 0].min()
-        P_max = Z0[:, 0].max()
-        Q_min = Z0[:, 1].min()
-        Q_max = Z0[:, 1].max()
-        
-        # Get the final mins and maxs
-        for t in range(1, max_num_timesteps):
-            print(f"Current graph: {t}")
-            
-            # Load a graph
-            Z = np.load(f"../init_dataset/Z_{t}.npy")
-            
-            # Extract the node features to be attacked
-            p = Z[:, 0]
-            q = Z[:, 1]
-        
-            # Update global mins/maxs
-            cur_p_min, cur_p_max = p.min(), p.max()
-            cur_q_min, cur_q_max = q.min(), q.max()
-        
-            if cur_p_min < P_min:
-                P_min = cur_p_min
-            if cur_p_max > P_max:
-                P_max = cur_p_max
-            if cur_q_min < Q_min:
-                Q_min = cur_q_min
-            if cur_q_max > Q_max:
-                Q_max = cur_q_max
-    
     # ! ---- Training set ---- !
     # -- Generate Ao --
     generate_Ao(1, 5761)   
@@ -622,3 +557,32 @@ if __name__ == '__main__':
       print(f"\nNot-attacked, Current cycle: #{t}")
       generate_honest(t)
     
+    
+    # ! ---- Standardization ---- !
+    root = "../final_dataset"
+    pattern = os.path.join(root, "Z_*.npy")
+    files = glob.glob(pattern)
+
+    # Compute mean & std
+    sum_   = 0.0
+    sumsq  = 0.0
+    count  = 0
+
+    for fn in files:
+        arr = np.load(fn)
+        sum_  += arr.sum()
+        sumsq += (arr**2).sum()
+        count += arr.size
+
+    mean = sum_ / count
+    var  = sumsq / count - mean**2
+    std  = np.sqrt(var)
+
+    print(f"Global mean = {mean:.5f},  std = {std:.5f}")
+
+    # Standardize each file
+    for fn in files:
+        arr = np.load(fn)
+        arr = (arr - mean) / std
+        base = os.path.basename(fn)
+        np.save(os.path.join(root, base), arr)
