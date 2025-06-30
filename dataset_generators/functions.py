@@ -221,30 +221,17 @@ def preparePyGDataset(config, FDIADataset):
           Which is just 4=(P, Q, V, angle) or 2=(P, Q) per node
     """
     
-    # Definition of the lists containing indices of Ad ans As samples
-    Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
-    As_indices = list(range(config["As_start"], config["As_end"]))
+    # Definition of the lists containing all indices
+    all_indices = list(range(34561))
 
-    # Definition of the list containing indices of not attacked(normal) samples
-    normal_indices = list(range(int(config["total_num_of_samples"]/2), config["total_num_of_samples"]))
+    # Get training indices
+    train_indices = all_indices[1:23041]
 
-    # 4/6 1/6 1/6 split
-    #train_len = int(4/6 * config["total_num_of_samples"])
-    #val_len   = int(1/6 * config["total_num_of_samples"]) + train_len
-    #test_len   = int(1/6 * config["total_num_of_samples"]) + train_len + val_len
-
-    # Get training indices: 6k of Ad + 6k of As + 12k of norm = 4/6 of 36k samples or 24k samples total
-    train_indices = Ad_indices[:config["Ad_train"]] + As_indices[:config["As_train"]] + normal_indices[:config["norm_train"]]
-
-    # Get validation indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
-    val_indices = (Ad_indices[config["Ad_train"]:config["Ad_train"]+config["Ad_val"]] + 
-                   As_indices[config["As_train"]:config["As_train"]+config["As_val"]] + 
-                   normal_indices[config["norm_train"]:config["norm_train"]+config["norm_val"]])
+    # Get validation indices
+    val_indices = all_indices[23041:28801]
     
-    # Get test indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
-    test_indices = (Ad_indices[config["Ad_train"]+config["Ad_val"]:] + 
-                   As_indices[config["As_train"]+config["As_val"]:] + 
-                   normal_indices[config["norm_train"]+config["norm_val"]:])
+    # Get test indices
+    test_indices = all_indices[28801:34561]
 
     # Mix attacks and normal indices within the subsets
     random.shuffle(train_indices)

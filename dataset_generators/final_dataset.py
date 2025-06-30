@@ -22,6 +22,7 @@ import sys
 """
 - Do I implement the Lz and Lx formulas correctly?
 - Do I need to change active, reactive powers as well in the measurement_model?
+- Is my multi-label supervised training implemented correctly(Generally)?
 
 
 TODOs:
@@ -29,9 +30,8 @@ TODOs:
     - Lz might not affect the loss because measurement_model is is not differentiable
     - Make sure that 0-inj and generator buses are disregarded while T_x representing a single "island"
     
-    - Generate dataset
-    - Adapt dataset loading function
-    - Start a new training
+    - Make training work
+    - Make sure y's of Ao have additional element that symbolizes 1/0 target
 """
 
 
@@ -322,14 +322,32 @@ def worker(t):
     z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t)
     
     # Save current attacked sample
+        # Exclude Voltage magnitude and angle
+    
+    z_att = z_att.reshape(300, 4)
+    z_att = z_att[:, :2]
     np.save(f'../final_dataset/Z_{t}.npy', z_att)
+        
+        # Estimeated X
     #np.save(f'../final_dataset/X_{t}.npy', x_est)
+    
+        # Attach "attacked" graph-level flag to the target
+    y = np.concatenate([y, [1]])
     np.save(f'../final_dataset/target_{t}.npy', y)
     
     return t  # for tracking progress
 
 
 def generate_Ao(start_id, finish_id, max_workers=12):
+    
+    # Un-paralleled generation for debugging
+    """
+    for t in range(start_id, finish_id):
+        print("Ao attack chosen")
+        worker(t)
+        print(f"Current cycle: #{t}")
+     """   
+        
     
     with ProcessPoolExecutor(max_workers=max_workers) as exe:
         futures = {

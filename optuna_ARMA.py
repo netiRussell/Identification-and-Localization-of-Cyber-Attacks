@@ -15,6 +15,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 import optuna
 from optuna.trial import TrialState
 from optuna.samplers import TPESampler
+from datetime import datetime
 
 from dataset import FDIADataset
 from dataset_generators.functions import preparePyGDataset, selectDevice
@@ -32,27 +33,12 @@ config = {
               "weight_decay": 1e-5,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "total_num_of_samples": 36000,
-              "Ad_start": 0,
-              "Ad_end": 9000,
-              "As_start": 9000,
-              "As_end": 18000,
-              "Ad_train": 6000,
-              "As_train": 6000,
-              "Ad_val": 1500,
-              "As_val": 1500,
-              "Ad_test": 1500,
-              "As_test": 1500,
-              "norm_train": 12000,
-              "norm_val": 3000,
-              "norm_test": 3000,
-              
               "in_channels": 2,
               "hidden_channels": 32,
               "num_stacks": 4,  # K
               "num_layers": 8,
               "dropout": 0.3, 
-              "num_nodes": 2848,
+              "num_nodes": 300,
           }
 
 # -- Prepare the dataset --
@@ -80,7 +66,7 @@ def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
     
     # Declare default value for loss and # of batches(steps) for grad accumulation
     total_loss = 0
-    accum_steps = 16 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
+    accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
     
     # Reset accumulated grads
     optimizer.zero_grad()
@@ -186,7 +172,6 @@ def validate(model, valid_loader):
                 # - No attack case -
                 # If prediction is 100% correct (all nodes = 0 since no attack)
                 if(np.sum(pred_nodes) == 0):
-                    FA += 0
                     F1 += 1
                     recall += 1
                     accuracy += 1
@@ -280,7 +265,7 @@ def objective(trial):
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
 
-    return accuracy
+    return f1
 
 
 # # # # # # # # # # # # # # # # # #
@@ -291,7 +276,7 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "studyARMA_06_15_25"  # Unique identifier of the study.
+study_name = "studyARMA_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 
@@ -301,7 +286,7 @@ study = optuna.create_study(
                             storage=storage_name
                             )
 
-study.optimize(objective, n_trials=150, timeout=None)
+study.optimize(objective, n_trials=100, timeout=None)
 
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
 complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])

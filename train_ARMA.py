@@ -53,27 +53,12 @@ config = {
               "weight_decay": 1e-5,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "total_num_of_samples": 36000,
-              "Ad_start": 0,
-              "Ad_end": 9000,
-              "As_start": 9000,
-              "As_end": 18000,
-              "Ad_train": 6000,
-              "As_train": 6000,
-              "Ad_val": 1500,
-              "As_val": 1500,
-              "Ad_test": 1500,
-              "As_test": 1500,
-              "norm_train": 12000,
-              "norm_val": 3000,
-              "norm_test": 3000,
-              
               "in_channels": 2,
               "hidden_channels": 32,
-              "num_stacks": 4,  # K
-              "num_layers": 8,
-              "dropout": 0.3, 
-              "num_nodes": 2848,
+              "num_stacks": 3,  # K
+              "num_layers": 5,
+              "dropout": 0.5, 
+              "num_nodes": 300,
           }
 
 
@@ -235,7 +220,6 @@ def validate(valid_loader):
                 # - No attack case -
                 # If prediction is 100% correct (all nodes = 0 since no attack)
                 if(np.sum(pred_nodes) == 0):
-                    FA += 0
                     F1 += 1
                     recall += 1
                     accuracy += 1
