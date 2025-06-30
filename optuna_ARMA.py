@@ -27,7 +27,7 @@ import sys
 config = {
               "dataset_root": "./final_dataset",
     
-              "num_epochs": 256,
+              "num_epochs": 100,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
               "weight_decay": 1e-5,
@@ -123,8 +123,10 @@ def validate(model, valid_loader):
     # Declare holders for metrics
     FA = 0
     F1 = 0 
+    temp_F1 = 0
     recall = 0
-    accuracy = 0
+    localization_accuracy = 0
+    detection_accuracy = 0
     
     # Make sure grads of the model won't be affected
     with torch.no_grad():
@@ -157,7 +159,7 @@ def validate(model, valid_loader):
             pred_nodes = (torch.sigmoid(logits_nodes) > 0.5).float()  
             
             # Get graph-level classification:
-            #graph_pred = (logits_graph > 0).long()
+            graph_pred = (logits_graph > 0).long()
             
             # Turn tensors into NumPy arrays
             pred_nodes = pred_nodes.cpu().numpy()
@@ -168,17 +170,24 @@ def validate(model, valid_loader):
             all_targets.append(target_nodes)
             
             # Calculate current metrics
+            # Graph-wise
+            if( target_graph == graph_pred):
+                detection_accuracy += 1
+            
+            # Node-wise
             if( target_graph == 0 ):
                 # - No attack case -
+                
                 # If prediction is 100% correct (all nodes = 0 since no attack)
                 if(np.sum(pred_nodes) == 0):
-                    F1 += 1
+                    temp_F1 = 1
                     recall += 1
-                    accuracy += 1
+                    localization_accuracy += 1
                     
                 # If at least 1 node is a mismatch (has a value of 1)    
                 else:
-                   FA += 1
+                    temp_F1 = 0
+                    FA += 1
             else:
                 # - Attack took place case -
                 # Compute FP, TN, and FA
@@ -187,12 +196,16 @@ def validate(model, valid_loader):
                 FA += FP / (FP + TN)
                 
                 # Compute Recall and F1
-                F1 += f1_score(target_nodes, pred_nodes, zero_division=0)
+                temp_F1 = f1_score(target_nodes, pred_nodes, zero_division=0)
                 recall += recall_score(target_nodes, pred_nodes, zero_division=0) # DR
                 
                 # Compute a strict match
                 if( np.array_equal(pred_nodes, target_nodes) ):
-                    accuracy += 1
+                    localization_accuracy += 1
+            
+            # Sample percentage having F1 >= 95%
+            if(temp_F1 >= 0.95):
+                 F1 += 1
                 
         
 
@@ -203,9 +216,9 @@ def validate(model, valid_loader):
         # Metrics
         precision = precision_score(all_targets, all_preds, zero_division=0, average="micro")
         
-        # Number of elements in metrices (used to get mean)
+        # Number of elements in metrices (is used to get mean)
         n_elem_metrices = len(valid_loader)
-        return precision, recall/n_elem_metrices, F1/n_elem_metrices, accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
+        return precision, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
 # -- Optuna functions --
@@ -231,10 +244,10 @@ def objective(trial):
     hidden_channels = trial.suggest_categorical("hidden_channels", [32, 64, 128])
     
     # Generate number of stacks (K)
-    num_stacks = trial.suggest_categorical("num_stacks", [3, 4, 5, 6])
+    num_stacks = trial.suggest_categorical("num_stacks", [3, 4, 5])
     
     # Generate number of layers (T)
-    num_layers = trial.suggest_categorical("num_layers", [4, 5, 6, 7, 8])
+    num_layers = trial.suggest_categorical("num_layers", [4, 5, 6, 7])
     
     # Generate the model
     model = define_model(trial, dropout, hidden_channels, num_stacks, num_layers).to(device)
@@ -252,14 +265,23 @@ def objective(trial):
     for epoch in range(config["num_epochs"]):
         
         train_loss = train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader)
-        prec, rec, f1, accuracy, FA, avg_loss = validate(model, valid_loader)
+        prec, rec, f1, loc_acc, det_acc, FA, avg_loss = validate(model, valid_loader)
         
-        print(f"\nEpoch#{epoch}, Trial#{trial.number}, Average Train Loss={train_loss:.4f},")
-        print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f},")
-        print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
+        print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}")
+        print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
+        print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
+        print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
+        print("\n🔧 Trial Hyperparameters:")
+        print(f"  • Dropout:                {dropout:.3f}")
+        print(f"  • Hidden channels:        {hidden_channels}")
+        print(f"  • Num stacks (K):         {num_stacks}")
+        print(f"  • Num layers (T):         {num_layers}")
+        print(f"  • Learning rate (lr):     {lr:.2e}")
+        print(f"  • Graph loss importance:  {graph_loss_importance:.3f}")
+        print(f"  • Weight decay:           {config['weight_decay']}")
         print("----------------------------------------------------\n\n")
 
-        trial.report(accuracy, epoch)
+        trial.report(f1, epoch)
 
         # Handle pruning based on the intermediate value.
         if trial.should_prune():
@@ -276,7 +298,7 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "studyARMA_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
+study_name = "studyARMA2_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 

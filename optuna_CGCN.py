@@ -221,7 +221,7 @@ def objective(trial):
         print(f"  • Graph loss weight:     {graph_loss_importance:.3f}")
         print("----------------------------------------------------\n\n")
 
-        trial.report(accuracy, epoch)
+        trial.report(f1, epoch)
 
         # Handle pruning based on the intermediate value.
         if trial.should_prune():
