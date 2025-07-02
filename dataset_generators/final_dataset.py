@@ -16,7 +16,7 @@ import os
 import glob
 
 # Implemented functions
-from functions import saveNetwork, loadDataset, selectDevice
+from functions import saveNetwork, load_honest, load_tobeAttacked, selectDevice
 
 # TODO: to be deleteds
 import sys
@@ -37,15 +37,21 @@ TODOs:
     - Multiple random restarts of attack() if loss > TAU_LOSS
     - Lz might not affect the loss because measurement_model is not differentiable
 
-    - Run the training without scaling
-    - Run the training with the scaling
+    - Generate new dataset
+    - Switch final_dataset2 back to final_dataset in saveNetwork function 
+        and in root = "../final_dataset2"
+    - Make the Arma Optuna prune the same way the training stops regularly
+    - Start new trainings:
+        - Make sure that there is no NaN in ARMATransformer
+        - Figure out the best lr for ARMA with optuna
 """
 
 
 dataset_config = {
     "normal_scaling": False,
     "max_timesteps": 44634,
-    "number_nodes": 300
+    "number_nodes": 300,
+    "net_template": pn.case300(),
     }
 
 # Create a uniformly shuffled list of numbers from a range 1 to max_timesteps
@@ -56,9 +62,31 @@ def returnTimeStep():
     return timesteps_left.pop()
     
     
+# -- Create a mask of non-attackable buses --
+# Consider all buses
+all_buses = set(dataset_config["net_template"].bus.index)
 
+# Find generator buses
+#    include all synchronous gens, static gens, and the external grid (slack)
+gen_buses = set()
+if hasattr(dataset_config["net_template"], "gen"):
+    gen_buses |= set(dataset_config["net_template"].gen.bus.values)
+if hasattr(dataset_config["net_template"], "sgen"):
+    gen_buses |= set(dataset_config["net_template"].sgen.bus.values)
+if hasattr(dataset_config["net_template"], "ext_grid"):
+    gen_buses |= set(dataset_config["net_template"].ext_grid.bus.values)
 
+# Find buses with some injections
+inj_buses = set()
+for attr in ("load", "shunt", "gen", "sgen", "ext_grid"):
+    if hasattr(dataset_config["net_template"], attr):
+        inj_buses |= set(getattr(dataset_config["net_template"], attr).bus.values)
 
+# Find zero-injection buses: complement of buses with some injections
+zero_inj_buses = all_buses - inj_buses
+
+# Create a mask where 0-injection and generator buses are included
+irrelevant_buses = gen_buses | zero_inj_buses
 
 
 # Hyperparameters for Ao
@@ -96,43 +124,13 @@ def measurement_model(x_complex, net):
 
 # Build attack surface via BFS on IEEE300 graph
 def bfs_attack_surface(net, entry_bus, radius):
-    # Create a graph and generate BFS based on it
-    G = pptop.create_nxgraph(net, respect_switches=False, include_impedances=False)
-    lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
-    attacked_buses = list(lengths.keys())
     
-    # Consider all buses
-    all_buses = set(net.bus.index)
-    
-    # Find generator buses
-    #    include all synchronous gens, static gens, and the external grid (slack)
-    gen_buses = set()
-    if hasattr(net, "gen"):
-        gen_buses |= set(net.gen.bus.values)
-    if hasattr(net, "sgen"):
-        gen_buses |= set(net.sgen.bus.values)
-    if hasattr(net, "ext_grid"):
-        gen_buses |= set(net.ext_grid.bus.values)
-    
-    # Find buses with some injections
-    inj_buses = set()
-    for attr in ("load", "shunt", "gen", "sgen", "ext_grid"):
-        if hasattr(net, attr):
-            inj_buses |= set(getattr(net, attr).bus.values)
-    
-    # Find zero-injection buses: complement of buses with some injections
-    zero_inj_buses = all_buses - inj_buses
-    
-    # Create a mask where 0-injection and generator buses are disregarded
-    remove_buses = gen_buses | zero_inj_buses
-    attacked_buses = [b for b in attacked_buses if b not in remove_buses]
-    
-    # State indices (one per bus)
-    T_x = attacked_buses
+    _, _, T_x = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, 1, 
+                                 entry_bus, radius, dataset_config["number_nodes"])
     
     # Measurement indices: assume 4 measurements per bus
     T_z = []
-    for b in attacked_buses:
+    for b in T_x:
         T_z.extend([4*b + i for i in range(4)])
     
     # Asserts to make sure T_x and T_z are aligned with the output  
@@ -394,9 +392,14 @@ def generate_Ao(start_id, finish_id, max_workers=12):
 
 
 def generate_Ad(t_save):
-    # Load a node features and a mask with the buses to be attacked marked as True
+    # Get random timestep, entry bus, and radius of the attack
     t_load = returnTimeStep()
-    Z, mask = loadDataset(t_load, True, dataset_config["number_nodes"])
+    p = np.random.randint(0, dataset_config["number_nodes"])
+    r = np.random.randint(R_MIN, R_MAZ+1)
+    
+    # Load a node features and a mask with the buses to be attacked marked as True
+    Z, mask, _ = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, t_load, p, r, 
+                                dataset_config["number_nodes"])
   
     # - Ad data subset -
     print("Ad attack chosen")
@@ -435,9 +438,14 @@ def generate_Ad(t_save):
 
 
 def generate_As(t_save):
-    # Load a node features and a mask with the buses to be attacked marked as True
+    # Get random timestep, entry bus, and radius of the attack
     t_load = returnTimeStep()
-    Z, mask = loadDataset(t_load, True, dataset_config["number_nodes"])
+    p = np.random.randint(0, dataset_config["number_nodes"])
+    r = np.random.randint(R_MIN, R_MAZ+1)
+    
+    # Load a node features and a mask with the buses to be attacked marked as True
+    Z, mask, _ = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, t_load, p, r, 
+                                dataset_config["number_nodes"])
   
     # - As data subset -
     print("As attack chosen")
@@ -457,14 +465,20 @@ def generate_As(t_save):
 
 
 def generate_Ar(t_save):
-    # Load a node features and a mask with the buses to be attacked marked as True
+    # Get random timestep, entry bus, and radius of the attack
     t_load = returnTimeStep()
-    Z, mask = loadDataset(t_load, True, dataset_config["number_nodes"])
+    p = np.random.randint(0, dataset_config["number_nodes"])
+    r = np.random.randint(R_MIN, R_MAZ+1)
+    
+    # Load a node features and a mask with the buses to be attacked marked as True
+    Z, mask, _ = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, t_load, p, r, 
+                                dataset_config["number_nodes"])
     
     # Load data TAU steps before
-    # [NOTE]: assumes that the current step is grate than tau
+    # [NOTE]: assumes that the current step is grater than tau
     tau = 4
-    Z_tau, _ = loadDataset(t-tau, True, dataset_config["number_nodes"])
+    Z_tau, _, _ = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, 
+                                t_load-tau, p, r, dataset_config["number_nodes"])
   
     # - Ar data subset -
     print("Ar attack chosen")
@@ -484,8 +498,11 @@ def generate_Ar(t_save):
 
 
 def generate_honest(t):
+    # Get a random timestep
+    t_load = returnTimeStep()
+    
     # Load a node features and a mask filled with False values
-    Z, mask = loadDataset(t, False, dataset_config["number_nodes"])
+    Z, mask = load_honest(t_load, dataset_config["number_nodes"])
     
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
@@ -559,7 +576,7 @@ if __name__ == '__main__':
     
     
     # ! ---- Standardization ---- !
-    root = "../final_dataset"
+    root = "../final_dataset2"
     pattern = os.path.join(root, "Z_*.npy")
     files = glob.glob(pattern)
 
