@@ -26,19 +26,15 @@ class CGCN(nn.Module):
         self.num_nodes = num_nodes
         
         self.chebConv1 = ChebConv(in_channels, u, Ks)
-        self.bn1 = BatchNorm(u)
         self.dropout1 = nn.Dropout(dropout)
 
         self.chebConv2 = ChebConv(u, u, Ks)
-        self.bn2 = BatchNorm(u)
         self.dropout2 = nn.Dropout(dropout)
 
         self.chebConv3 = ChebConv(u, u, Ks)
-        self.bn3 = BatchNorm(u)
         self.dropout3 = nn.Dropout(dropout)
 
         self.chebConv4 = ChebConv(u, u, Ks)
-        self.bn4 = BatchNorm(u)
         self.dropout4 = nn.Dropout(dropout)
         
         """
@@ -56,28 +52,24 @@ class CGCN(nn.Module):
         # 4 CGCN layers
         # Relu and Dropout are applied after each one of them
         x = self.chebConv1(x, edge_index, weights)
-        x = self.bn1(x)
         x = F.relu(x)
         x = self.dropout1(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv1")
         
         x = self.chebConv2(x, edge_index, weights)
-        x = self.bn2(x)
         x = F.relu(x)
         x = self.dropout2(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv2")
         
         x = self.chebConv3(x, edge_index, weights)
-        x = self.bn3(x)
         x = F.relu(x)
         x = self.dropout3(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
         #    raise RuntimeError("NaN/Inf in x → after chebConv3")
         
         x = self.chebConv4(x, edge_index, weights)
-        x = self.bn4(x)
         x = F.relu(x)
         x = self.dropout4(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():

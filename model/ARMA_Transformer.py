@@ -7,17 +7,8 @@ class GNNArma(nn.Module):
     """
     GNN encoder using ARMA filters.
     """
-    # TODO: add batch norm and resid. Make sure there are no inf or nan by
-    """
-    if torch.isnan(x).any() or torch.isinf(x).any():
-        raise RuntimeError("NaN/Inf in x → after chebConv3")
-        
-        and
-        
-    x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
-    """
     def __init__(self, in_channels, hidden_channels, out_channels, 
-                 num_stacks=3, num_layers=2):
+                 num_stacks=3, num_layers=2, dropout=0.3, leakyRelu_rate=0.1):
         super(GNNArma, self).__init__()
         self.conv1 = ARMAConv(in_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
@@ -27,78 +18,91 @@ class GNNArma(nn.Module):
         
         self.conv3 = ARMAConv(hidden_channels, out_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.bn = nn.BatchNorm1d(out_channels)
+        
+        # Dropouts:
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        
+        # Activation functions:
+        self.leakyRelu = nn.LeakyReLU(leakyRelu_rate)
 
     def forward(self, x, edge_index, weights):
         # First ARMA layer
         x = self.conv1(x, edge_index, weights)
-        x = F.relu(x)
+        x = self.leakyRelu(x)
+        x = self.dropout1(x)
         
         # Second ARMA layer
         x = self.conv2(x, edge_index, weights)
-        x = F.relu(x)
+        x = self.leakyRelu(x)
         
         # Third ARMA layer
         x = self.conv3(x, edge_index, weights)
-        x = self.bn(x)
-        x = F.relu(x)
+        x = self.leakyRelu(x)
+        x = self.dropout2(x)
         return x
 
 class GNNArmaTransformer(nn.Module):
     """
     Combines the GNN ARMA encoder with a vanilla Transformer encoder
     and a classification head.
-    
-    out_channels = output features dimension for GNNArma
     """
     def __init__(self, in_channels, hidden_channels, out_channels, num_stacks=3, 
-                 num_layers=2, transformer_heads=4, transformer_layers=2):
+                 num_layers=2, transformer_heads=4, transformer_layers=2,
+                 dropout=0.3, num_nodes=300, leakyRelu_rate=0.1):
         super(GNNArmaTransformer, self).__init__()
         
-        self.gnn_arma = GNNArma(in_channels, hidden_channels, out_channels, num_stacks, num_layers)
+        # Safe parameters to be reused later
+        self.num_nodes = num_nodes
         
+        # ARMA
+        self.gnn_arma = GNNArma(in_channels, hidden_channels, out_channels, num_stacks, num_layers, dropout, leakyRelu_rate)
+        
+        # Transformer-Encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=out_channels,
+            dropout=dropout,
             nhead=transformer_heads,
             dim_feedforward=2048,
-            batch_first=True
+            batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(
             encoder_layer,
-            num_layers=transformer_layers
+            num_layers=transformer_layers,
         )
         
         # Classifier
-        self.classifier = nn.Linear(out_channels, 2)
+        self.classifier = nn.Linear(out_channels, 1)
+        
+        # Activation functions:
+        self.leakyRelu = nn.LeakyReLU(leakyRelu_rate)
         
 
-    def forward(self, x, edge_index, weights, batch):
-        # 1) GNN ARMA encoding
-        out = self.gnn_arma(x, edge_index, weights)              # [num_nodes, out_channels]
+    def forward(self, x, edge_index, weights, batch):  
+        # TODO: to be deleted
+        if torch.isnan(x).any() or torch.isnan(weights).any():
+            print("Found NaN in inputs")
         
-        # 2) reshape to [B, N, F] so transformer works per-graph
-        B = int(batch.max().item()) + 1
-        N = out.size(0) // B
-        out = out.view(B, N, -1)                  # [B, N, F]
-        out = self.transformer(out)               # [B, N, F]
-        out = out.view(-1, out.size(-1))          # [B * N, F]
+        # Get the batch size
+        current_batchSize = int(batch.max().item()) + 1
         
-        # 3) Classification logits per node
-        logits = self.classifier(out)                  # [num_nodes, 2]
-        
-        return logits
+        # ARMA layers
+        h = self.gnn_arma(x, edge_index, weights)
 
+        # Reshape so that transformer works per-graph → [B, N, F]
+        h = h.view(current_batchSize, self.num_nodes, -1)
 
-"""
-Training Initialization:
-    
-model = GNNArmaTransformer(
-    in_channels=in_feats,
-    hidden_channels=config["hidden_channels"],
-    out_channels=config["out_channels"],
-    num_stacks=config["num_stacks"], 
-    num_layers=config["num_layers"],
-    transformer_heads=config["transformer_heads"],
-    transformer_layers=config["transformer_layers"]
-)
-"""
+        # Transformer Encoder
+        h = self.transformer(h)
+        h = self.leakyRelu(h)
+
+        # Classification logits per node (Localizing an attack)
+        logits_nodes = self.classifier(h)
+
+        # Squeeze => [B, N]
+        logits_nodes = logits_nodes.squeeze(-1)
+
+        # Classification logits per graph (Identifying an attack)
+        logits_graph = logits_nodes.max(dim=1).values
+
+        return logits_nodes, logits_graph

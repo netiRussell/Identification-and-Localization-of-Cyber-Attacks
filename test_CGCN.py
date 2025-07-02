@@ -22,7 +22,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "checkpoint2025_06_11.pth.tar"
+    "checkpoint_name": "cgcn.tar"
     }
 
 
@@ -65,12 +65,14 @@ for sample_id, sample in enumerate(test_loader):
     probs = torch.sigmoid(logits)
     classification = 1 if probs[0] > 0.5 else 0
     
+    """
     if sample_id < 1500:
         print("Ad")
     elif sample_id < 3000:
         print("As")
     else:
         print("No attak")
+    """
     
     print(f"Output: {probs.item()}({classification}), Expected: {sample.y_graph.item()}\n")
     if(int(classification) == int(sample.y_graph.item())):

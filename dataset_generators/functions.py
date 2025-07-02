@@ -7,6 +7,8 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 import random
 from torch_geometric.loader import DataLoader
+import pandapower.topology as pptop
+import networkx as nx
 
 # TODO: To be deleted
 import sys
@@ -42,21 +44,69 @@ def saveNetwork( Z, target, i):
   np.save(f"../final_dataset/target_{i}", target)
 
 
+def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nodes=300):
+    """
+    Returns node features of timestep t_load and a mask 
+    filled with False values of size number_nodes
 
-def loadDataset( i, attack=False, number_nodes=300 ):
+    Parameters:
+    ----------
+    G : NX network object
+       Graph topology of the currently chosen electrical network(bus system)
+
+    irrelevant_buses : list or set of integers
+        Buses that should be excluded from attack consideration (e.g., generator or zero-injection buses).
+ 
+    t_load : Integer
+        Current timestep used to load the correct snapshot of node features.
+ 
+    entry_bus : Integer
+        The bus from which the attack (or BFS traversal) begins.
+ 
+    radius : Integer
+        The maximum number of hops from the entry bus to include in the BFS region.
+
+    Returns:
+    -------
+    Z : NumPy array filled with float values
+      Node features array
+
+    mask : NumPy array filled with boolean values
+      Boolean mask used to selectively modify only the rows of data corresponding to True values in it
+    
+    T_x: list of integers
+        List of nodes to be attacked
+    """
+    lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
+    attacked_buses = list(lengths.keys())
+    
+    # Filter out the 0-injection and generator buses
+    T_x = [b for b in attacked_buses if b not in irrelevant_buses]
+    
+    # Create an empty mask
+    mask = np.full(number_nodes, False, dtype="bool")
+    
+    # Fill the mask with the buses to be attacked
+    mask[T_x] = True
+    
+    # Z = Node features array
+    Z = np.load(f"../init_dataset/Z_{t_load}.npy")
+    
+    return Z, mask, T_x
+
+def load_honest( t_load, number_nodes=300 ):
   """
-  Loads the network and randomly decides if the network will be attacked.
-  Then, creates a boolean mask to attack random buses
-  (mask has a size of 0 if the network will not experience any attack)
+  Returns node features of timestep t_load and a mask 
+  filled with False values of size number_nodes
 
   Parameters:
   ----------
-  i: Integer
-    Current iteration (i from 0 to 36000)
+  t_load: Integer
+    Current timestep
     
-  attack: Boolean
-      Boolean that represents whether this sample will be attacked
-  
+  number_nodes: Integer
+      Number of nodes present in the current network
+      
 
   Returns:
   -------
@@ -66,31 +116,11 @@ def loadDataset( i, attack=False, number_nodes=300 ):
   mask : NumPy array filled with boolean values
     Boolean mask used to selectively modify only the rows of data corresponding to True values in it
   """
-  # X = Node features array
-  Z = np.load(f"../init_dataset/Z_{i}.npy")
+  # Z = Node features array
+  Z = np.load(f"../init_dataset/Z_{t_load}.npy")
 
-  # Declare and Define with default values mask and num of buses to be attacked
-  num_buses_tobe_attacked = 0
+  # Declare and Define mask with no True values(nothing to attack)
   mask = np.full(number_nodes, False, dtype="bool")
-
-  if(attack == True):
-    print("There will be an attack")
-    
-    # Randomly pick number of buses to be attacked between 5-10% of the buses
-    num_buses_tobe_attacked = int(np.random.uniform(0.05, 0.10) * number_nodes)
-
-    # Load direct neighbors of each node
-    neighbors = np.load("../init_dataset/neighbors.npy", allow_pickle = True).tolist()
-    
-    # Randomly pick the root bus around which the attack will take place
-    root = np.random.randint(0, number_nodes)
-
-    # Find buses connected to the root with bfs 
-    buses_tobe_attacked = _bfs(root, num_buses_tobe_attacked, neighbors)
-
-    # Fill mask with the output of bfs
-    mask[buses_tobe_attacked] = True
-
 
   return Z, mask
 
@@ -221,30 +251,17 @@ def preparePyGDataset(config, FDIADataset):
           Which is just 4=(P, Q, V, angle) or 2=(P, Q) per node
     """
     
-    # Definition of the lists containing indices of Ad ans As samples
-    Ad_indices = list(range(config["Ad_start"], config["Ad_end"]))
-    As_indices = list(range(config["As_start"], config["As_end"]))
+    # Definition of the lists containing all indices
+    all_indices = list(range(34561))
 
-    # Definition of the list containing indices of not attacked(normal) samples
-    normal_indices = list(range(int(config["total_num_of_samples"]/2), config["total_num_of_samples"]))
+    # Get training indices
+    train_indices = all_indices[1:23041]
 
-    # 4/6 1/6 1/6 split
-    #train_len = int(4/6 * config["total_num_of_samples"])
-    #val_len   = int(1/6 * config["total_num_of_samples"]) + train_len
-    #test_len   = int(1/6 * config["total_num_of_samples"]) + train_len + val_len
-
-    # Get training indices: 6k of Ad + 6k of As + 12k of norm = 4/6 of 36k samples or 24k samples total
-    train_indices = Ad_indices[:config["Ad_train"]] + As_indices[:config["As_train"]] + normal_indices[:config["norm_train"]]
-
-    # Get validation indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
-    val_indices = (Ad_indices[config["Ad_train"]:config["Ad_train"]+config["Ad_val"]] + 
-                   As_indices[config["As_train"]:config["As_train"]+config["As_val"]] + 
-                   normal_indices[config["norm_train"]:config["norm_train"]+config["norm_val"]])
+    # Get validation indices
+    val_indices = all_indices[23041:28801]
     
-    # Get test indices: 1.5k of Ad + 1.5k of As + 3k of norm = 1/6 of 36k samples or 6k samples total
-    test_indices = (Ad_indices[config["Ad_train"]+config["Ad_val"]:] + 
-                   As_indices[config["As_train"]+config["As_val"]:] + 
-                   normal_indices[config["norm_train"]+config["norm_val"]:])
+    # Get test indices
+    test_indices = all_indices[28801:34561]
 
     # Mix attacks and normal indices within the subsets
     random.shuffle(train_indices)

@@ -15,6 +15,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 import optuna
 from optuna.trial import TrialState
 from optuna.samplers import TPESampler
+from datetime import datetime
 
 from dataset import FDIADataset
 from dataset_generators.functions import preparePyGDataset, selectDevice
@@ -32,22 +33,7 @@ config = {
               "weight_decay": 1e-5,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "total_num_of_samples": 36000,
-              "Ad_start": 0,
-              "Ad_end": 9000,
-              "As_start": 9000,
-              "As_end": 18000,
-              "Ad_train": 6000,
-              "As_train": 6000,
-              "Ad_val": 1500,
-              "As_val": 1500,
-              "Ad_test": 1500,
-              "As_test": 1500,
-              "norm_train": 12000,
-              "norm_val": 3000,
-              "norm_test": 3000,
-              
-              "num_nodes": 2848,
+              "num_nodes": 300,
               "u": 32, # hidden channels
               "Ks": 5,
               "dropout": 0.2,
@@ -78,7 +64,7 @@ def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
     
     # Declare default value for loss and # of batches(steps) for grad accumulation
     total_loss = 0
-    accum_steps = 16 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
+    accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
     
     # Reset accumulated grads
     optimizer.zero_grad()
@@ -197,6 +183,10 @@ def define_model(trial, dropout, u, Ks):
 def objective(trial):
     print(f"---- Current trial: {trial.number} ----")
     
+    # Initialization of variables for early pruning
+    best_loss = 99.99
+    patience_counter = 0
+    
     # Generate dropout
     dropout = trial.suggest_float("dropout", 0.1, 0.5)
     
@@ -213,12 +203,12 @@ def objective(trial):
     lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
     
     # Generate graph_loss importance
-    graph_loss_importance = trial.suggest_float("graph_loss_importance", 0.1, 2.0)
+    graph_loss_importance = trial.suggest_float("graph_loss_importance", 0.8, 2.0)
 
     # Generate the optimizer.
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=config["weight_decay"])
 
-    # Training of the model.
+    # Training&Validating of the model.
     for epoch in range(config["num_epochs"]):
         
         train_loss = train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader)
@@ -227,15 +217,31 @@ def objective(trial):
         print(f"\nEpoch#{epoch}, Trial#{trial.number}, Average Train Loss={train_loss:.4f},")
         print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f},")
         print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
+        print("🔧 Trial hyperparameters:")
+        print(f"  • Dropout:               {dropout:.3f}")
+        print(f"  • Hidden units (u):      {u}")
+        print(f"  • Filter size (Ks):      {Ks}")
+        print(f"  • Learning rate (lr):    {lr:.2e}")
+        print(f"  • Graph loss weight:     {graph_loss_importance:.3f}")
         print("----------------------------------------------------\n\n")
 
-        trial.report(accuracy, epoch)
+        trial.report(f1, epoch)
+        
+        # Early pruning
+        if best_loss - avg_loss >= 1e-4:
+            best_loss = avg_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= 16:
+                print(f"Early pruning: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
+                raise optuna.exceptions.TrialPruned()
 
         # Handle pruning based on the intermediate value.
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
 
-    return accuracy
+    return f1
 
 
 # # # # # # # # # # # # # # # # # #
@@ -246,7 +252,7 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "studyCGCN_06_15_25"  # Unique identifier of the study.
+study_name = "studyCGCN1_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 
@@ -256,7 +262,7 @@ study = optuna.create_study(
                             storage=storage_name
                             )
 
-study.optimize(objective, n_trials=150, timeout=None)
+study.optimize(objective, n_trials=100, timeout=None)
 
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
 complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])

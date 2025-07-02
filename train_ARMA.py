@@ -49,31 +49,16 @@ config = {
     
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
-              "lr": 1e-3, 
+              "lr": 1e-3,
               "weight_decay": 1e-5,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "total_num_of_samples": 36000,
-              "Ad_start": 0,
-              "Ad_end": 9000,
-              "As_start": 9000,
-              "As_end": 18000,
-              "Ad_train": 6000,
-              "As_train": 6000,
-              "Ad_val": 1500,
-              "As_val": 1500,
-              "Ad_test": 1500,
-              "As_test": 1500,
-              "norm_train": 12000,
-              "norm_val": 3000,
-              "norm_test": 3000,
-              
               "in_channels": 2,
               "hidden_channels": 32,
-              "num_stacks": 4,  # K
-              "num_layers": 8,
+              "num_stacks": 3,  # K
+              "num_layers": 5,
               "dropout": 0.3, 
-              "num_nodes": 2848,
+              "num_nodes": 300,
           }
 
 
@@ -186,8 +171,10 @@ def validate(valid_loader):
     # Declare holders for metrics
     FA = 0
     F1 = 0 
+    temp_F1 = 0
     recall = 0
-    accuracy = 0
+    localization_accuracy = 0
+    detection_accuracy = 0
     
     # Make sure grads of the model won't be affected
     with torch.no_grad():
@@ -220,7 +207,7 @@ def validate(valid_loader):
             pred_nodes = (torch.sigmoid(logits_nodes) > 0.5).float()  
             
             # Get graph-level classification:
-            #graph_pred = (logits_graph > 0).long()
+            graph_pred = (logits_graph > 0).long()
             
             # Turn tensors into NumPy arrays
             pred_nodes = pred_nodes.cpu().numpy()
@@ -231,18 +218,24 @@ def validate(valid_loader):
             all_targets.append(target_nodes)
             
             # Calculate current metrics
+            # Graph-wise
+            if( target_graph == graph_pred):
+                detection_accuracy += 1
+            
+            # Node-wise
             if( target_graph == 0 ):
                 # - No attack case -
+                
                 # If prediction is 100% correct (all nodes = 0 since no attack)
                 if(np.sum(pred_nodes) == 0):
-                    FA += 0
-                    F1 += 1
+                    temp_F1 = 1
                     recall += 1
-                    accuracy += 1
+                    localization_accuracy += 1
                     
                 # If at least 1 node is a mismatch (has a value of 1)    
                 else:
-                   FA += 1
+                    temp_F1 = 0
+                    FA += 1
             else:
                 # - Attack took place case -
                 # Compute FP, TN, and FA
@@ -251,12 +244,16 @@ def validate(valid_loader):
                 FA += FP / (FP + TN)
                 
                 # Compute Recall and F1
-                F1 += f1_score(target_nodes, pred_nodes, zero_division=0)
+                temp_F1 = f1_score(target_nodes, pred_nodes, zero_division=0)
                 recall += recall_score(target_nodes, pred_nodes, zero_division=0) # DR
                 
                 # Compute a strict match
                 if( np.array_equal(pred_nodes, target_nodes) ):
-                    accuracy += 1
+                    localization_accuracy += 1
+            
+            # Sample percentage having F1 >= 95%
+            if(temp_F1 >= 0.95):
+                 F1 += 1
                 
         
 
@@ -267,9 +264,9 @@ def validate(valid_loader):
         # Metrics
         precision = precision_score(all_targets, all_preds, zero_division=0, average="micro")
         
-        # Number of elements in metrices (used to get mean)
+        # Number of elements in metrices (is used to get mean)
         n_elem_metrices = len(valid_loader)
-        return precision, recall/n_elem_metrices, F1/n_elem_metrices, accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
+        return precision, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -280,7 +277,8 @@ def validate(valid_loader):
 best_loss = 99.99
 patience_counter = 0
 start = time.time()
-accuracies_arr = []
+loc_accuracies_arr = []
+det_accuracies_arr = []
 f1_arr = []
 rec_arr = [] # DR
 fa_arr = []
@@ -290,9 +288,10 @@ for epoch in range(1, config["num_epochs"] + 1):
     train_loss = train_epoch(epoch)
     
     # Conduct a validation for a single epoch
-    prec, rec, f1, accuracy, FA, avg_loss = validate(valid_loader)
+    prec, rec, f1, loc_acc, det_acc, FA, avg_loss = validate(valid_loader)
     # Append all the metrics from the validation
-    accuracies_arr.append(accuracy)
+    loc_accuracies_arr.append(loc_acc)
+    det_accuracies_arr.append(det_acc)
     f1_arr.append(f1)
     rec_arr.append(rec)
     fa_arr.append(FA)
@@ -302,7 +301,8 @@ for epoch in range(1, config["num_epochs"] + 1):
     elapsed = time.time() - start
     print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}, Time={elapsed:.1f}s")
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
-    print(f"FA={FA:.4f}, Accuracy={accuracy:.4f}, Validation Loss: {avg_loss:.4f}")
+    print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
+    print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint
@@ -312,7 +312,8 @@ for epoch in range(1, config["num_epochs"] + 1):
         'config': config,
         'currentEpoch': epoch,
         'trainingTime': time.time() - start,
-        'accuracies': np.array(accuracies_arr),
+        'loc_accuracies': np.array(loc_accuracies_arr),
+        'det_accuracies': np.array(det_accuracies_arr),
         'prec': prec,
         'rec': rec_arr,
         'f1': f1_arr,
