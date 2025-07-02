@@ -44,15 +44,15 @@ def saveNetwork( Z, target, i):
   np.save(f"../final_dataset/target_{i}", target)
 
 
-def load_tobeAttacked(net, irrelevant_buses, t_load, entry_bus, radius, number_nodes=300):
+def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nodes=300):
     """
     Returns node features of timestep t_load and a mask 
     filled with False values of size number_nodes
 
     Parameters:
     ----------
-    net : Pandapower network object
-       The electrical network used to determine graph topology and load data.
+    G : NX network object
+       Graph topology of the currently chosen electrical network(bus system)
 
     irrelevant_buses : list or set of integers
         Buses that should be excluded from attack consideration (e.g., generator or zero-injection buses).
@@ -77,15 +77,11 @@ def load_tobeAttacked(net, irrelevant_buses, t_load, entry_bus, radius, number_n
     T_x: list of integers
         List of nodes to be attacked
     """
-    G = pptop.create_nxgraph(net, respect_switches=False, include_impedances=False)
     lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
     attacked_buses = list(lengths.keys())
     
     # Filter out the 0-injection and generator buses
-    attacked_buses = [b for b in attacked_buses if b not in irrelevant_buses]
-    
-    # State indices (one per bus)
-    T_x = attacked_buses
+    T_x = [b for b in attacked_buses if b not in irrelevant_buses]
     
     # Create an empty mask
     mask = np.full(number_nodes, False, dtype="bool")

@@ -49,6 +49,9 @@ TODOs:
         - Figure out the best lr for ARMA with optuna
 """
 
+# # # # # # # # # # # # # #  #
+# ---- Global variables ---- #
+# # # # # # # # # # # # # #  #
 
 dataset_config = {
     "normal_scaling": False,
@@ -56,6 +59,8 @@ dataset_config = {
     "number_nodes": 300,
     "net_template": pn.case300(),
     }
+
+dataset_config["G"] = pptop.create_nxgraph(dataset_config["net_template"], respect_switches=False, include_impedances=False)
 
 # Create a uniformly shuffled list of numbers from a range 1 to max_timesteps
 timesteps_left = list(range(1, dataset_config["max_timesteps"]))
@@ -104,6 +109,12 @@ R_MIN = 6             # minimum attack radius for IEEE300
 R_MAZ = 8             # maximum attack radius for IEEE300
 device = selectDevice()
 
+
+
+# # # # # # # # # # # #
+# ---- Functions ---- #
+# # # # # # # # # # # #
+
 # Utility: map complex state to pandapower net measurements
 def measurement_model(x_complex, net):
     # Copy the net
@@ -128,7 +139,7 @@ def measurement_model(x_complex, net):
 # Build attack surface via BFS on IEEE300 graph
 def bfs_attack_surface(net, entry_bus, radius):
     
-    _, _, T_x = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, 1, 
+    _, _, T_x = load_tobeAttacked(dataset_config["G"], irrelevant_buses, 1, 
                                  entry_bus, radius, dataset_config["number_nodes"])
     
     # Measurement indices: assume 4 measurements per bus
@@ -401,7 +412,7 @@ def generate_Ad(t_save):
     r = np.random.randint(R_MIN, R_MAZ+1)
     
     # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask, _ = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, t_load, p, r, 
+    Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
                                 dataset_config["number_nodes"])
   
     # - Ad data subset -
@@ -447,7 +458,7 @@ def generate_As(t_save):
     r = np.random.randint(R_MIN, R_MAZ+1)
     
     # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask, _ = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, t_load, p, r, 
+    Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
                                 dataset_config["number_nodes"])
   
     # - As data subset -
@@ -474,13 +485,13 @@ def generate_Ar(t_save):
     r = np.random.randint(R_MIN, R_MAZ+1)
     
     # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask, _ = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, t_load, p, r, 
+    Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
                                 dataset_config["number_nodes"])
     
     # Load data TAU steps before
     # [NOTE]: assumes that the current step is grater than tau
     tau = 4
-    Z_tau, _, _ = load_tobeAttacked(dataset_config["net_template"], irrelevant_buses, 
+    Z_tau, _, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, 
                                 t_load-tau, p, r, dataset_config["number_nodes"])
   
     # - Ar data subset -
