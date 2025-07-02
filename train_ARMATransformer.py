@@ -21,6 +21,8 @@ from dataset_generators.functions import save_checkpoint, preparePyGDataset, sel
 
 # TODO: delete at the final stage
 import sys
+# TODO: delete at the final stage
+torch.autograd.set_detect_anomaly(True)
 
 
 # -- Clear cache from the previous training --
@@ -43,7 +45,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
               "weight_decay": 1e-5,
-              "n_lrWarmup_steps": 0, # 1 batch = 1 step
+              "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32, # channels for ARMA

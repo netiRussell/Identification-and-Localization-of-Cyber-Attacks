@@ -237,6 +237,11 @@ def define_model(trial, dropout, hidden_channels, num_stacks, num_layers):
 def objective(trial):
     print(f"---- Current trial: {trial.number} ----")
     
+    # Initialization of variables for early pruning
+    best_loss = 99.99
+    patience_counter = 0
+
+    
     """
     # Generate dropout
     dropout = trial.suggest_float("dropout", 0.1, 0.5)
@@ -272,7 +277,7 @@ def objective(trial):
     # Generate the optimizer.
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=config["weight_decay"])
 
-    # Training of the model.
+    # Training&Validating of the model.
     for epoch in range(config["num_epochs"]):
         
         train_loss = train_epoch(model, optimizer, epoch, train_loader)
@@ -292,10 +297,21 @@ def objective(trial):
         print("----------------------------------------------------\n\n")
 
         trial.report(f1, epoch)
+        
+        # Early pruning
+        if best_loss - avg_loss >= 1e-4:
+            best_loss = avg_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= 16:
+                print(f"Early pruning: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
+                raise optuna.exceptions.TrialPruned()
 
         # Handle pruning based on the intermediate value.
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
+            
 
     return f1
 

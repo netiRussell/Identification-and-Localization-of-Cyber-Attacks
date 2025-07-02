@@ -78,7 +78,11 @@ class GNNArmaTransformer(nn.Module):
         self.leakyRelu = nn.LeakyReLU(leakyRelu_rate)
         
 
-    def forward(self, x, edge_index, weights, batch):    
+    def forward(self, x, edge_index, weights, batch):  
+        # TODO: to be deleted
+        if torch.isnan(x).any() or torch.isnan(weights).any():
+            print("Found NaN in inputs")
+        
         # Get the batch size
         current_batchSize = int(batch.max().item()) + 1
         

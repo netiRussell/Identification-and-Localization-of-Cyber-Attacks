@@ -38,11 +38,14 @@ TODOs:
     - Lz might not affect the loss because measurement_model is not differentiable
 
     - Generate new dataset
-    - Switch final_dataset2 back to final_dataset in saveNetwork function 
-        and in root = "../final_dataset2"
-    - Make the Arma Optuna prune the same way the training stops regularly
     - Start new trainings:
-        - Make sure that there is no NaN in ARMATransformer
+        - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
+            of the reasons why my models don't fully converge
+            I added to the ARMA tranformer model:
+                if torch.isnan(x).any() or torch.isnan(weights).any():
+                print("Found NaN in inputs")
+            I added to the Arma transformer training:
+                torch.autograd.set_detect_anomaly(True)
         - Figure out the best lr for ARMA with optuna
 """
 
@@ -576,7 +579,7 @@ if __name__ == '__main__':
     
     
     # ! ---- Standardization ---- !
-    root = "../final_dataset2"
+    root = "../final_dataset"
     pattern = os.path.join(root, "Z_*.npy")
     files = glob.glob(pattern)
 

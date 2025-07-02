@@ -40,8 +40,8 @@ def saveNetwork( Z, target, i):
   -------
     None
   """
-  np.save(f"../final_dataset2/Z_{i}", Z)
-  np.save(f"../final_dataset2/target_{i}", target)
+  np.save(f"../final_dataset/Z_{i}", Z)
+  np.save(f"../final_dataset/target_{i}", target)
 
 
 def load_tobeAttacked(net, irrelevant_buses, t_load, entry_bus, radius, number_nodes=300):
