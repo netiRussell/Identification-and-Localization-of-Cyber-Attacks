@@ -51,13 +51,13 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
               "weight_decay": 1e-5,
-              "n_lrWarmup_steps": 0, # 1 batch = 1 step
+              "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32,
               "num_stacks": 3,  # K
               "num_layers": 5,
-              "dropout": 0.5, 
+              "dropout": 0.3, 
               "num_nodes": 300,
           }
 

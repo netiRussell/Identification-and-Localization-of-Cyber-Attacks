@@ -60,7 +60,7 @@ scaler = GradScaler(enabled=False)
 
 
 # -- Custom train and validation --
-def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
+def train_epoch(model, optimizer, epoch, train_loader):
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
     
@@ -87,7 +87,7 @@ def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
             
             # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += (criterion(logits_graph, target_graph.squeeze(0))*graph_loss_importance)
+            loss += (criterion(logits_graph, target_graph.squeeze(0)))
             total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
@@ -237,6 +237,7 @@ def define_model(trial, dropout, hidden_channels, num_stacks, num_layers):
 def objective(trial):
     print(f"---- Current trial: {trial.number} ----")
     
+    """
     # Generate dropout
     dropout = trial.suggest_float("dropout", 0.1, 0.5)
     
@@ -248,15 +249,25 @@ def objective(trial):
     
     # Generate number of layers (T)
     num_layers = trial.suggest_categorical("num_layers", [4, 5, 6, 7])
+    """
+    
+    # Generate dropout
+    dropout = 0.3
+    
+    # Generate hidden features
+    hidden_channels = 32
+    
+    # Generate number of stacks (K)
+    num_stacks = 3
+    
+    # Generate number of layers (T)
+    num_layers = 5
     
     # Generate the model
     model = define_model(trial, dropout, hidden_channels, num_stacks, num_layers).to(device)
     
     # Generate the lr
     lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
-    
-    # Generate graph_loss importance
-    graph_loss_importance = trial.suggest_float("graph_loss_importance", 0.1, 2.0)
 
     # Generate the optimizer.
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=config["weight_decay"])
@@ -264,7 +275,7 @@ def objective(trial):
     # Training of the model.
     for epoch in range(config["num_epochs"]):
         
-        train_loss = train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader)
+        train_loss = train_epoch(model, optimizer, epoch, train_loader)
         prec, rec, f1, loc_acc, det_acc, FA, avg_loss = validate(model, valid_loader)
         
         print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}")
@@ -277,7 +288,6 @@ def objective(trial):
         print(f"  • Num stacks (K):         {num_stacks}")
         print(f"  • Num layers (T):         {num_layers}")
         print(f"  • Learning rate (lr):     {lr:.2e}")
-        print(f"  • Graph loss importance:  {graph_loss_importance:.3f}")
         print(f"  • Weight decay:           {config['weight_decay']}")
         print("----------------------------------------------------\n\n")
 
@@ -298,7 +308,7 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "studyARMA2_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
+study_name = "studyARMA4_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 
@@ -308,7 +318,7 @@ study = optuna.create_study(
                             storage=storage_name
                             )
 
-study.optimize(objective, n_trials=100, timeout=None)
+study.optimize(objective, n_trials=50, timeout=None)
 
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
 complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
