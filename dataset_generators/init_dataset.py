@@ -21,6 +21,13 @@ import itertools
 
 # ! Should I substitute PSSE from pandapower with the formula from the paper?
 
+# Should I scale both react and act power with the same scaling factor?
+# How to get IEEE bus systems?
+# Is it ok to use absolute value for the std when conducting 1% additive noise: scale=abs(z * sigma_n)
+# Is my PSSE function correct, is flat(sets 1.0 p.u. / 0° for all buses) a good values for init?
+    # Is it ok to use WLS as the algorithm for PSSE?
+    # Is it ok to use std=abs(p)*sigma_n when creating measurements?
+
 """
 Each transmission line or branch connects two buses:
     A “from” bus (start node)
@@ -38,6 +45,136 @@ Together, these loads determine the apparent power (S)
 
 # TODO: delete after debugging is fully complete.
 import sys
+import matplotlib.pyplot as plt
+
+"""
+# -- Scaler generation --
+import pandas as pd
+import glob
+from sklearn.preprocessing import StandardScaler  # or MinMaxScaler
+
+# Load & concat
+files = glob.glob("./csv/*.csv")
+dfs = []
+for fn in files:
+    # assume each CSV has columns ["Time Stamp","Load"]
+    df = pd.read_csv(fn, parse_dates=["Time Stamp"], index_col="Time Stamp")
+    dfs.append(df)
+
+full = pd.concat(dfs).sort_index()
+full = full[~full.index.duplicated()]
+
+# Resample to 1-min and interpolate
+#    this will create every minute from start to end
+full_1min = full.resample("1T").interpolate(method="time")
+
+# 3. Fit a scaler
+loads = full_1min["Load"].values.reshape(-1, 1)
+scaler = StandardScaler().fit(loads)
+
+# Normalize the loads
+norm_vec = scaler.transform(loads).ravel()
+
+# Save the final vector
+#np.save("nyiso_normalized_load.npy", norm_vec)
+"""
+
+# -- Initial Configurations --
+# IEEE bus systems
+# TODO: download the actual IEEE bus systems
+N = {"14": pn.case14(),
+     "118": pn.case118(),
+     "300": pn.case300()}
+# Number of timesteps
+T = 36000 
+# Scaling coefficients
+k = 0.1
+sigma_s=0.03
+# Noise coefficient
+sigma_n = 0.01
+# Scaling vector
+S = np.load("S.npy")
+
+def run_psse(net, z, sigma_n, nodelist):
+    # Clear old measurements
+    net.measurement = net.measurement.iloc[0:0]
+
+    # Load measurements
+    for idx, bus in enumerate(nodelist):
+        p, q, vm, va = z[idx]
+        create_measurement(net, "p", "bus", p, std_dev=abs(p)*sigma_n, element=bus)
+        create_measurement(net, "q", "bus", q, std_dev=abs(q)*sigma_n, element=bus)
+        create_measurement(net, "v", "bus", vm, std_dev=abs(vm)*sigma_n, element=bus)
+        create_measurement(net, "va", "bus", va, std_dev=abs(va)*sigma_n, element=bus)
+
+    # Run WLS estimation
+    converged = estimate(
+        net,
+        algorithm="wls",
+        init="results",
+        tolerance=1e-6,
+        maximum_iterations=20,
+        calculate_voltage_angles=True
+    )
+    if not converged:
+        raise RuntimeError("State estimation did not converge")
+
+    # Build estimated feature matrix
+    res = net.res_bus_est.sort_index()
+    x = np.vstack([
+        res.loc[bus, ["p_mw", "q_mvar", "vm_pu", "va_degree"]].values
+        for bus in nodelist
+    ])
+    return x
+
+# Function for a single time-step generation
+def generate(net, S_t, G, nodelist, base_p, base_q):
+    # Generate the scale factor
+    sf = np.random.normal(loc=(1 + k * S_t), scale=sigma_s, size=len(net.load.index))
+    # Bound sf within 0.7 and 1.3
+    sf = np.where(sf > 1.3, 1.3, sf)
+    sf = np.where(sf < 0.7, 0.7, sf)
+
+    # Scale the buses
+    net.load["p_mw"] = base_p * sf
+    net.load["q_mvar"] = base_q * sf
+    
+    # Run the AC powerflow algorithm
+    pp.runpp(net)
+
+    # Copy bus‐measurements into node attributes
+    for b in G.nodes():
+        r = net.res_bus.loc[b]
+        G.nodes[b].update({
+            "p_mw":    r["p_mw"],
+            "q_mvar":  r["q_mvar"],
+            "vm_pu":   r["vm_pu"],
+            "va_degree": r["va_degree"]
+        })
+    
+    # Build the measurement matrix; shape: [N, 4]
+    attrs = ["p_mw","q_mvar","vm_pu","va_degree"]
+    z = np.vstack([
+        [ G.nodes[n][k] for k in attrs ]
+        for n in nodelist
+    ])
+
+    # Add 1% relative uniform noise 
+    z = np.random.normal(loc=z, scale=abs(z * sigma_n))
+    
+    # Get estimated state
+    x = run_psse(net, z, sigma_n, nodelist)
+
+    return z, x
+
+
+# # # # # # # # # # # #
+# ---- Main code ---- #
+# # # # # # # # # # # #
+# -- Select network --
+net = N["300"]
+base_p  = net.load["p_mw"].values.copy()
+base_q  = net.load["q_mvar"].values.copy()
 
 # Surpress the warnings:
 import logging
@@ -246,6 +383,7 @@ np.save("../final_dataset/edge_indices", edge_indices)
 np.save("../init_dataset/weights", weights)
 np.save("../final_dataset/weights", weights)
 
+
 # -- Turn the net into a graph --
 G = pptop.create_nxgraph(
     net,
@@ -287,6 +425,7 @@ if __name__ == "__main__":
             idx += 1
     
     print(f"Done. Saved {idx-1} samples.")
+
 
 
 
