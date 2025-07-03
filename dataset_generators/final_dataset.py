@@ -37,16 +37,14 @@ TODOs:
     - Multiple random restarts of attack() if loss > TAU_LOSS
     - Lz might not affect the loss because measurement_model is not differentiable
 
-    - Generate new dataset
-    - Start new trainings:
-        - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
-            of the reasons why my models don't fully converge
-            I added to the ARMA tranformer model:
-                if torch.isnan(x).any() or torch.isnan(weights).any():
-                print("Found NaN in inputs")
-            I added to the Arma transformer training:
-                torch.autograd.set_detect_anomaly(True)
-        - Figure out the best lr for ARMA with optuna
+    - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
+        of the reasons why my models don't fully converge
+        I added to the ARMA tranformer model:
+            if torch.isnan(x).any() or torch.isnan(weights).any():
+            print("Found NaN in inputs")
+        I added to the Arma transformer training:
+            torch.autograd.set_detect_anomaly(True)
+    - Figure out the best lr for ARMA with optuna
 """
 
 # # # # # # # # # # # # # #  #
@@ -478,9 +476,8 @@ def generate_As(t_save):
     saveNetwork(Z, target, t_save)
 
 
-def generate_Ar(t_save):
-    # Get random timestep, entry bus, and radius of the attack
-    t_load = returnTimeStep()
+def generate_Ar(tau, t_save, t_load):
+    # Get random entry bus, and radius of the attack
     p = np.random.randint(0, dataset_config["number_nodes"])
     r = np.random.randint(R_MIN, R_MAZ+1)
     
@@ -489,8 +486,6 @@ def generate_Ar(t_save):
                                 dataset_config["number_nodes"])
     
     # Load data TAU steps before
-    # [NOTE]: assumes that the current step is grater than tau
-    tau = 4
     Z_tau, _, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, 
                                 t_load-tau, p, r, dataset_config["number_nodes"])
   
@@ -577,11 +572,27 @@ if __name__ == '__main__':
       print(f"\nCurrent cycle: #{t}")
       generate_As(t)
     
-    # -- Generate Ar -- 
+    # -- Generate Ar --
+    prepared_Ar = list()
+    tobe_Returned = list()
+    tau = 4
+    
+    # Gather IDs to be used
+    while(len(prepared_Ar) != 720):
+        t_load = returnTimeStep()
+        if(t_load-tau < 1 ):
+            tobe_Returned.append(t_load)
+        else:
+            prepared_Ar.append(t_load)
+    
+    # Push bask unused IDs
+    while(len(tobe_Returned) != 0):
+        timesteps_left.append(tobe_Returned.pop())
+        
+    # Generate the samples
     for t in range(30961, 31681):
-      print("[NOTE]: assumes that t > 10")
       print(f"\nCurrent cycle: #{t}")
-      generate_Ar(t)
+      generate_Ar(tau, t, prepared_Ar.pop())
     
     # -- Generate honest samples (not-attacked) --
     for t in range(31681, 34561):
