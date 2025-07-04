@@ -36,7 +36,16 @@ Logic for non-sequential attacks:
 TODOs:
     - Multiple random restarts of attack() if loss > TAU_LOSS
     - Lz might not affect the loss because measurement_model is not differentiable
-
+    
+    
+    - Check on ARMA training and double check that no NaNs or Infs are present. Is 600 warm-up steps 
+    better than 500? (1000 is confirmed to be worse)
+    
+    - Regenerate the dataset
+    - Figure out the max_norm and check if you want to use grad clipping
+    - Use GraphNorm or BatchNorm on the node features, and LayerNorm before the Transformer.
+    - Write down info on LR with focus on F1 and then switch the focus to detection of FDIA  and rerun optuna
+    
     - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
         of the reasons why my models don't fully converge
         I added to the ARMA tranformer model:
@@ -601,16 +610,23 @@ if __name__ == '__main__':
     
     
     # ! ---- Standardization ---- !
+    # Load in the training dataset
     root = "../final_dataset"
-    pattern = os.path.join(root, "Z_*.npy")
-    files = glob.glob(pattern)
+    Z_list = []
+    
+    for i in range(1, 23041):
+        file_path = os.path.join(root, f"Z_{i}.npy")
+        if os.path.exists(file_path):  # check if file exists
+            Z_list.append(file_path)
+        else:
+            raise RuntimeError(f"Z_{i}.npy doesn't exist ->  dataset is corrupted")
 
     # Compute mean & std
     sum_   = 0.0
     sumsq  = 0.0
     count  = 0
 
-    for fn in files:
+    for fn in Z_list:
         arr = np.load(fn)
         sum_  += arr.sum()
         sumsq += (arr**2).sum()
@@ -620,7 +636,11 @@ if __name__ == '__main__':
     var  = sumsq / count - mean**2
     std  = np.sqrt(var)
 
-    print(f"Global mean = {mean:.5f},  std = {std:.5f}")
+    print(f"Training dataset, mean = {mean:.5f},  std = {std:.5f}")
+    
+    # Load in all files:
+    pattern = os.path.join(root, "Z_*.npy")
+    files = glob.glob(pattern)
 
     # Standardize each file
     for fn in files:
