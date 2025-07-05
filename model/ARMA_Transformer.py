@@ -22,6 +22,7 @@ class GNNArma(nn.Module):
         # Dropouts:
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
         
         # Activation functions:
         self.leakyRelu = nn.LeakyReLU(leakyRelu_rate)
@@ -35,11 +36,12 @@ class GNNArma(nn.Module):
         # Second ARMA layer
         x = self.conv2(x, edge_index, weights)
         x = self.leakyRelu(x)
+        x = self.dropout2(x)
         
         # Third ARMA layer
         x = self.conv3(x, edge_index, weights)
         x = self.leakyRelu(x)
-        x = self.dropout2(x)
+        x = self.dropout3(x)
         return x
 
 class GNNArmaTransformer(nn.Module):
@@ -81,13 +83,16 @@ class GNNArmaTransformer(nn.Module):
     def forward(self, x, edge_index, weights, batch):  
         # TODO: to be deleted
         if torch.isnan(x).any() or torch.isnan(weights).any():
-            print("Found NaN in inputs")
+            raise RuntimeError("Found NaN in inputs")
         
         # Get the batch size
         current_batchSize = int(batch.max().item()) + 1
         
         # ARMA layers
         h = self.gnn_arma(x, edge_index, weights)
+        
+        if not torch.isfinite(h).all():
+            raise RuntimeError("NaN or inf in ARMA output => add a small GraphNorm/BatchNorm after each ARMAConv")
 
         # Reshape so that transformer works per-graph → [B, N, F]
         h = h.view(current_batchSize, self.num_nodes, -1)

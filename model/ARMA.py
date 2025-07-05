@@ -44,22 +44,30 @@ class GNNArma(nn.Module):
         x = self.ARMAconv1(x, edge_index, weights)
         x = F.relu(x)
         x = self.dropout1(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("First layer output NaNs/Infs")
         
         # Second ARMA layer
         x = self.ARMAconv2(x, edge_index, weights)
         x = F.relu(x)
-        #x = self.dropout2(x)
+        x = self.dropout2(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("Second layer output NaNs/Infs")
         
         # Third ARMA layer
         x = self.ARMAconv3(x, edge_index, weights)
         x = F.relu(x)
         x = self.dropout3(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("Third layer output NaNs/Infs")
         
         # from [total_nodes, u] → [batch_size, num_nodes, u]
         x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
         
         # Classification logits per node (Localizing an attack)
         logits_nodes = self.classifier(x).squeeze(-1)              # [batch_size, num_nodes]
+        if not torch.isfinite(x).all():
+            raise ValueError("Classifier output NaNs/Infs")
         
         # Classification logits per graph (Identifying an attack)
         logits_graph = logits_nodes.max(dim=1).values # choose max one

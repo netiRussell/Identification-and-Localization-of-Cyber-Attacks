@@ -38,11 +38,10 @@ TODOs:
     - Lz might not affect the loss because measurement_model is not differentiable
     
     
-    - Check on ARMA training and double check that no NaNs or Infs are present. Is 600 warm-up steps 
-    better than 500? (1000 is confirmed to be worse)
-    
+    - 600 warmup steps are the best so far for ARMA. Try 700
+    - Figure out the best max_norm
     - Regenerate the dataset
-    - Figure out the max_norm and check if you want to use grad clipping
+
     - Use GraphNorm or BatchNorm on the node features, and LayerNorm before the Transformer.
     - Write down info on LR with focus on F1 and then switch the focus to detection of FDIA  and rerun optuna
     
