@@ -51,7 +51,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
               "weight_decay": 1e-5,
-              "n_lrWarmup_steps": 700, # 1 batch = 1 step
+              "n_lrWarmup_steps": 550, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32,
@@ -91,7 +91,7 @@ optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config
 
 def lr_lambda(current_step: int):
     if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / float(500)
+        return float(current_step) / config["n_lrWarmup_steps"]
     return 1.0  # keep base_lr after warm-up
 
 scheduler = LambdaLR(optimizer, lr_lambda)
@@ -106,9 +106,11 @@ scaler = GradScaler(enabled=False)
 
 
 # -- Training & evaluation functions --
+# TO BE DELETED
+gradSpike = False
 def train_epoch(epoch):
     # TO BE DELETED
-    gradSpike = False
+    global gradSpike
     
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()

@@ -93,7 +93,7 @@ optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config
 
 def lr_lambda(current_step: int):
     if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / float(500)
+        return float(current_step) / config["n_lrWarmup_steps"]
     return 1.0  # keep base_lr after warm-up
 
 scheduler = LambdaLR(optimizer, lr_lambda)
