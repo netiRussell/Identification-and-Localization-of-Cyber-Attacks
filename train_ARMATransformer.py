@@ -229,7 +229,7 @@ def validate(valid_loader):
             
             # Apply activation function on the logits to get node-level probability
             # and convert it into a classification
-            pred_nodes = (torch.sigmoid(logits_nodes) > 0.5).float()  
+            pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
             
             # Get graph-level classification:
             graph_pred = (logits_graph > 0).long()

@@ -81,7 +81,7 @@ def scalerGenerator():
     norm_vec = scaler.transform(loads).ravel()
     
     # Save the final vector
-    np.save("nyiso_normalized_load.npy", norm_vec)
+    np.save("S.npy", norm_vec)
 
 # -- Initial Configurations --
 # IEEE bus systems

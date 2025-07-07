@@ -172,7 +172,7 @@ def validate(model, valid_loader):
             
             # Apply activation function on the logits to get node-level probability
             # and convert it into a classification
-            pred_nodes = (torch.sigmoid(logits_nodes) > 0.5).float()  
+            pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
             
             # Get graph-level classification:
             graph_pred = (logits_graph > 0).long()
@@ -273,7 +273,7 @@ def objective(trial):
     """
     
     # Generate dropout
-    dropout = 0.2
+    dropout = trial.suggest_float("dropout", 0.1, 0.5)
     
     # Generate hidden features
     hidden_channels = 32

@@ -204,7 +204,7 @@ def validate(valid_loader):
             prob = torch.sigmoid(logits_graph)
             
             # Convert probability into a classification
-            pred = 1 if prob > 0.5 else 0
+            pred = 1 if prob >= 0.5 else 0
              
             # Append current outputs
             all_preds.append(pred)
