@@ -28,10 +28,10 @@ import sys
 config = {
               "dataset_root": "./final_dataset",
     
-              "num_epochs": 100,
+              "num_epochs": 80,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
-              "weight_decay": 1e-5,
+              "weight_decay": 1e-2,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "in_channels": 2,

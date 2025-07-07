@@ -31,7 +31,7 @@ config = {
               "num_epochs": 100,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
-              "weight_decay": 1e-5,
+              "weight_decay": 1e-2,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "num_nodes": 300,

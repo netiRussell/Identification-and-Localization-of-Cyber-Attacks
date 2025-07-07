@@ -44,14 +44,14 @@ config = {
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
-              "weight_decay": 1e-5,
+              "weight_decay": 1e-2,
               "n_lrWarmup_steps": 600, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32, # channels for ARMA
               "num_stacks": 3,  # K
               "num_layers": 5,
-              "out_channels": 2048, # channels of a transformer-encoder
+              "out_channels": 256, # channels of a transformer-encoder
               "transformer_heads": 4,
               "transformer_layers": 2,
               "leakyRelu_rate": 0.1,
@@ -126,6 +126,14 @@ def train_epoch(epoch):
         minibatch = minibatch.to(device)
         
         with autocast(device_type=device.type, enabled=use_cuda):
+            
+            # TODO: TO BE DELETED, USED FOR DEBUG ONLY
+            h, mask = to_dense_batch(minibatch.x, minibatch.batch) # h: [B, N_max, F], mask: [B, N_max]
+            actual = mask.sum(dim=1)                       # actual nodes per graph
+            if (actual != config["num_nodes"]).any():
+                print("Varying sizes:", actual)
+                raise ValueError("Graphs have different dimensions")
+            
             # Get targets for the batch
             target_nodes = minibatch.y
             target_graph = minibatch.y_graph

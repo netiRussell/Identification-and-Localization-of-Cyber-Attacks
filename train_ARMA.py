@@ -50,8 +50,8 @@ config = {
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
-              "weight_decay": 1e-5,
-              "n_lrWarmup_steps": 550, # 1 batch = 1 step
+              "weight_decay": 1e-2,
+              "n_lrWarmup_steps": 600, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32,
