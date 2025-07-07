@@ -10,6 +10,8 @@ class GNNArma(nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, 
                  num_stacks=3, num_layers=2, dropout=0.3, leakyRelu_rate=0.1):
         super(GNNArma, self).__init__()
+        
+        # ARMA convolutional graph layers
         self.conv1 = ARMAConv(in_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
         
@@ -19,27 +21,44 @@ class GNNArma(nn.Module):
         self.conv3 = ARMAConv(hidden_channels, out_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
         
-        # Dropouts:
+        # Layer Normalizations
+        self.layerNorm1 = nn.LayerNorm(hidden_channels)
+        self.layerNorm2 = nn.LayerNorm(hidden_channels)
+        self.layerNorm3 = nn.LayerNorm(out_channels)
+        
+        # Dropouts
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
         
-        # Activation functions:
+        # Activation functions
         self.leakyRelu = nn.LeakyReLU(leakyRelu_rate)
 
     def forward(self, x, edge_index, weights):
         # First ARMA layer
         x = self.conv1(x, edge_index, weights)
+        x = self.layerNorm1(x)
         x = self.leakyRelu(x)
         x = self.dropout1(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("First layer output NaNs/Infs")
         
         # Second ARMA layer
         x = self.conv2(x, edge_index, weights)
+        x = self.layerNorm2(x)
         x = self.leakyRelu(x)
+        x = self.dropout2(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("Second layer output NaNs/Infs")
         
         # Third ARMA layer
         x = self.conv3(x, edge_index, weights)
+        x = self.layerNorm3(x)
         x = self.leakyRelu(x)
-        x = self.dropout2(x)
+        x = self.dropout3(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("Third layer output NaNs/Infs")
+            
         return x
 
 class GNNArmaTransformer(nn.Module):
@@ -63,7 +82,7 @@ class GNNArmaTransformer(nn.Module):
             d_model=out_channels,
             dropout=dropout,
             nhead=transformer_heads,
-            dim_feedforward=2048,
+            dim_feedforward=128,
             batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(
@@ -81,13 +100,16 @@ class GNNArmaTransformer(nn.Module):
     def forward(self, x, edge_index, weights, batch):  
         # TODO: to be deleted
         if torch.isnan(x).any() or torch.isnan(weights).any():
-            print("Found NaN in inputs")
+            raise RuntimeError("Found NaN in inputs")
         
         # Get the batch size
         current_batchSize = int(batch.max().item()) + 1
         
         # ARMA layers
         h = self.gnn_arma(x, edge_index, weights)
+        
+        if not torch.isfinite(h).all():
+            raise RuntimeError("NaN or inf in ARMA output => add a small GraphNorm/BatchNorm after each ARMAConv")
 
         # Reshape so that transformer works per-graph → [B, N, F]
         h = h.view(current_batchSize, self.num_nodes, -1)

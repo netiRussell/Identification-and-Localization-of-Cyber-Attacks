@@ -50,14 +50,14 @@ config = {
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
-              "weight_decay": 1e-5,
-              "n_lrWarmup_steps": 500, # 1 batch = 1 step
+              "weight_decay": 1e-2,
+              "n_lrWarmup_steps": 600, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32,
               "num_stacks": 3,  # K
               "num_layers": 5,
-              "dropout": 0.3, 
+              "dropout": 0.2, 
               "num_nodes": 300,
           }
 
@@ -91,7 +91,7 @@ optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config
 
 def lr_lambda(current_step: int):
     if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / float(500)
+        return float(current_step) / config["n_lrWarmup_steps"]
     return 1.0  # keep base_lr after warm-up
 
 scheduler = LambdaLR(optimizer, lr_lambda)
@@ -105,9 +105,13 @@ use_cuda = False
 scaler = GradScaler(enabled=False)
 
 
-
 # -- Training & evaluation functions --
+# TO BE DELETED
+gradSpike = False
 def train_epoch(epoch):
+    # TO BE DELETED
+    global gradSpike
+    
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
     
@@ -142,14 +146,27 @@ def train_epoch(epoch):
         
         # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
         if (minibatch_id+1) % accum_steps == 0:
-            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
+            # Clip gradients so their total L2 norm ≤ 1
+            total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if(total_norm > 1):
+                gradSpike = True
+            print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
+            
+            # Applying grads
+            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}\n")
             scaler.step(optimizer)
             scheduler.step()
             scaler.update()
             optimizer.zero_grad()
     
+    
+    
+    # Clip gradients so their total L2 norm ≤ 1
+    total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
+    print(f"Grad norm before clipping: {total_norm:.4f}")
+    
     # Extra gradient step to make sure there are no leftovers
-    print(f"Epoch#{epoch}, Last batch")
+    print(f"Epoch#{epoch}, Last batch\n")
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad()
@@ -176,10 +193,16 @@ def validate(valid_loader):
     localization_accuracy = 0
     detection_accuracy = 0
     
+    # TO BE DELETED:
+    counter = 0
+    
     # Make sure grads of the model won't be affected
     with torch.no_grad():
         for batch in valid_loader:
             batch = batch.to(device)
+            
+            # TO BE DELETED
+            counter += 1
 
             # Get model's raw output(logits)
             logits_nodes, logits_graph = model(
@@ -204,10 +227,11 @@ def validate(valid_loader):
             
             # Apply activation function on the logits to get node-level probability
             # and convert it into a classification
-            pred_nodes = (torch.sigmoid(logits_nodes) > 0.5).float()  
+            pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
             
             # Get graph-level classification:
             graph_pred = (logits_graph > 0).long()
+            print(f"MUST BE THE LOGICALLY SAME: {logits_graph}, {graph_pred}")
             
             # Turn tensors into NumPy arrays
             pred_nodes = pred_nodes.cpu().numpy()
@@ -228,13 +252,13 @@ def validate(valid_loader):
                 
                 # If prediction is 100% correct (all nodes = 0 since no attack)
                 if(np.sum(pred_nodes) == 0):
-                    temp_F1 = 1
+                    temp_F1 = 1.0
                     recall += 1
                     localization_accuracy += 1
                     
                 # If at least 1 node is a mismatch (has a value of 1)    
                 else:
-                    temp_F1 = 0
+                    temp_F1 = 0.0
                     FA += 1
             else:
                 # - Attack took place case -
@@ -254,6 +278,9 @@ def validate(valid_loader):
             # Sample percentage having F1 >= 95%
             if(temp_F1 >= 0.95):
                  F1 += 1
+            
+            # TO BE DELETED:
+            print("Current F1: {temp_F1}, Num of buses with f1 > 95%: {F1}")
                 
         
 
@@ -266,6 +293,8 @@ def validate(valid_loader):
         
         # Number of elements in metrices (is used to get mean)
         n_elem_metrices = len(valid_loader)
+        # TO BE DELETED:
+        print(f"Must be the same, delete `counter` after debug: {counter}, {n_elem_metrices}")
         return precision, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 

@@ -51,7 +51,7 @@ config = {
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
-              "weight_decay": 1e-5,
+              "weight_decay": 1e-2,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "num_nodes": 300,
@@ -89,7 +89,7 @@ optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config
 
 def lr_lambda(current_step: int):
     if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / float(500)
+        return float(current_step) / config["n_lrWarmup_steps"]
     return 1.0  # keep base_lr after warm-up
 
 scheduler = LambdaLR(optimizer, lr_lambda)
@@ -102,6 +102,8 @@ use_cuda = False
 scaler = GradScaler(enabled=False)
 
 
+# TO BE DELETED
+gradSpike = False
 
 # -- Training & evaluation functions --
 def train_epoch(epoch):
@@ -139,14 +141,27 @@ def train_epoch(epoch):
         
         # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
         if (minibatch_id+1) % accum_steps == 0:
+            # Clip gradients so their total L2 norm ≤ 1
+            total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if(total_norm > 1):
+                gradSpike = True
+            print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
+            
+            # Applying grads
             print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
             scaler.step(optimizer)
             scheduler.step()
             scaler.update()
             optimizer.zero_grad()
     
+    
+    
+    # Clip gradients so their total L2 norm ≤ 1
+    total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
+    print(f"Grad norm before clipping: {total_norm:.4f}")
+    
     # Extra gradient step to make sure there are no leftovers
-    print(f"Epoch#{epoch}, Last batch")
+    print(f"Epoch#{epoch}, Last batch\n")
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad()
@@ -189,7 +204,7 @@ def validate(valid_loader):
             prob = torch.sigmoid(logits_graph)
             
             # Convert probability into a classification
-            pred = 1 if prob > 0.5 else 0
+            pred = 1 if prob >= 0.5 else 0
              
             # Append current outputs
             all_preds.append(pred)

@@ -11,6 +11,7 @@ from model.CGCN import CGCN
 from torch.amp import autocast, GradScaler
 import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
+from torch.nn.utils import clip_grad_norm_
 
 import optuna
 from optuna.trial import TrialState
@@ -30,7 +31,7 @@ config = {
               "num_epochs": 100,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
-              "weight_decay": 1e-5,
+              "weight_decay": 1e-2,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "num_nodes": 300,
@@ -59,6 +60,9 @@ scaler = GradScaler(enabled=False)
 
 # -- Custom train and validation --
 def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
+    # TO BE DELETED
+    gradSpike = False
+    
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
     
@@ -93,13 +97,26 @@ def train_epoch(model, optimizer, epoch, graph_loss_importance, train_loader):
         
         # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
         if (minibatch_id+1) % accum_steps == 0:
-            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
+            # Clip gradients so their total L2 norm ≤ 1
+            total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if(total_norm > 1):
+                gradSpike = True
+            print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
+            
+            # Applying grads
+            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}\n")
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
     
+    
+    
+    # Clip gradients so their total L2 norm ≤ 1
+    total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
+    print(f"Grad norm before clipping: {total_norm:.4f}")
+    
     # Extra gradient step to make sure there are no leftovers
-    print(f"Epoch#{epoch}, Last batch")
+    print(f"Epoch#{epoch}, Last batch\n")
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad()
@@ -142,7 +159,7 @@ def validate(model, valid_loader):
             prob = torch.sigmoid(logits_graph)
             
             # Convert probability into a classification
-            pred = 1 if prob > 0.5 else 0
+            pred = 1 if prob >= 0.5 else 0
              
             # Append current outputs
             all_preds.append(pred)

@@ -26,16 +26,16 @@ test_config = {
     }
 
 
+# -- Select device --
+device = selectDevice()
+
 # -- Load the saved state --
-checkpoint = torch.load(f"./saved_grads/{test_config['checkpoint_name']}", weights_only=False)
+checkpoint = torch.load(f"./saved_grads/{test_config['checkpoint_name']}", map_location=device, weights_only=False)
 config = checkpoint['config']
 
 # -- Prepare the dataset --
 _, _, test_loader, in_feats = preparePyGDataset(config, FDIADataset)
 
-
-# -- Select device --
-device = selectDevice()
 
 # -- Instantiate model --
 #model = torch.compile(model, backend="aot_eager")
@@ -55,7 +55,7 @@ model.load_state_dict(checkpoint['model_state_dict'])
 # # # # # # # # # # #
 model.eval()
 strict_correct = 0
-total   = len(test_loader)
+total = len(test_loader)
 
 visualizeLossValid(checkpoint["fa"], checkpoint["rec"], checkpoint["f1"], checkpoint["accuracies"])
 

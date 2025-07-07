@@ -11,6 +11,7 @@ from model.ARMA import GNNArma
 from torch.amp import autocast, GradScaler
 import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
+from torch.nn.utils import clip_grad_norm_
 
 import optuna
 from optuna.trial import TrialState
@@ -27,10 +28,10 @@ import sys
 config = {
               "dataset_root": "./final_dataset",
     
-              "num_epochs": 100,
+              "num_epochs": 80,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
-              "weight_decay": 1e-5,
+              "weight_decay": 1e-2,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "in_channels": 2,
@@ -59,8 +60,12 @@ use_cuda = False
 scaler = GradScaler(enabled=False)
 
 
+
 # -- Custom train and validation --
 def train_epoch(model, optimizer, epoch, train_loader):
+    # TO BE DELETED
+    gradSpike = False
+    
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
     
@@ -95,13 +100,24 @@ def train_epoch(model, optimizer, epoch, train_loader):
         
         # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
         if (minibatch_id+1) % accum_steps == 0:
-            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}")
+            # Clip gradients so their total L2 norm ≤ 1
+            total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if(total_norm > 1):
+                gradSpike = True
+            print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
+            
+            # Applying grads
+            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}\n")
             scaler.step(optimizer)
             scaler.update()
-            optimizer.zero_grad()
+            optimizer.zero_grad() 
+    
+    # Clip gradients so their total L2 norm ≤ 1
+    total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
+    print(f"Grad norm before clipping: {total_norm:.4f}")
     
     # Extra gradient step to make sure there are no leftovers
-    print(f"Epoch#{epoch}, Last batch")
+    print(f"Epoch#{epoch}, Last batch\n")
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad()
@@ -156,7 +172,7 @@ def validate(model, valid_loader):
             
             # Apply activation function on the logits to get node-level probability
             # and convert it into a classification
-            pred_nodes = (torch.sigmoid(logits_nodes) > 0.5).float()  
+            pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
             
             # Get graph-level classification:
             graph_pred = (logits_graph > 0).long()
@@ -257,7 +273,7 @@ def objective(trial):
     """
     
     # Generate dropout
-    dropout = 0.3
+    dropout = trial.suggest_float("dropout", 0.1, 0.5)
     
     # Generate hidden features
     hidden_channels = 32
@@ -324,7 +340,7 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "studyARMA4_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
+study_name = "studyARMA_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 

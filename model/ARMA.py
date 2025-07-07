@@ -23,43 +23,62 @@ class GNNArma(nn.Module):
         
         self.num_nodes = num_nodes
         
+        # ARMA convolutional graph layers
         self.ARMAconv1 = ARMAConv(in_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.dropout1 = nn.Dropout(dropout)
         
         self.ARMAconv2 = ARMAConv(hidden_channels, hidden_channels,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.dropout2 = nn.Dropout(dropout)
         
         self.ARMAconv3 = ARMAConv(hidden_channels, 1,
                               num_stacks=num_stacks, num_layers=num_layers)
-        self.dropout3 = nn.Dropout(dropout)
-        
         
         # Classifier
         self.classifier = nn.Linear(1, 1)
+        
+        # Layer Normalizations
+        self.layerNorm1 = nn.LayerNorm(hidden_channels)
+        self.layerNorm2 = nn.LayerNorm(hidden_channels)
+        self.layerNorm3 = nn.LayerNorm(1)
+        
+        # Dropouts
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
+        
 
     def forward(self, x, edge_index, weights, batch):
         # First ARMA layer
         x = self.ARMAconv1(x, edge_index, weights)
+        x = self.layerNorm1(x)
         x = F.relu(x)
         x = self.dropout1(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("First layer output NaNs/Infs")
         
         # Second ARMA layer
         x = self.ARMAconv2(x, edge_index, weights)
+        x = self.layerNorm1(2)
         x = F.relu(x)
-        #x = self.dropout2(x)
+        x = self.dropout2(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("Second layer output NaNs/Infs")
         
         # Third ARMA layer
         x = self.ARMAconv3(x, edge_index, weights)
+        x = self.layerNorm3(x)
         x = F.relu(x)
         x = self.dropout3(x)
+        if not torch.isfinite(x).all():
+            raise ValueError("Third layer output NaNs/Infs")
         
         # from [total_nodes, u] → [batch_size, num_nodes, u]
         x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
         
         # Classification logits per node (Localizing an attack)
         logits_nodes = self.classifier(x).squeeze(-1)              # [batch_size, num_nodes]
+        if not torch.isfinite(x).all():
+            raise ValueError("Classifier output NaNs/Infs")
         
         # Classification logits per graph (Identifying an attack)
         logits_graph = logits_nodes.max(dim=1).values # choose max one
