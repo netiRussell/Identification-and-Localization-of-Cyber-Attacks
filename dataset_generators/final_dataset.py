@@ -37,8 +37,10 @@ TODOs:
     - Multiple random restarts of attack() if loss > TAU_LOSS
     - Lz might not affect the loss because measurement_model is not differentiable
     
+    
+    - Make sure that target matches the attacked nodes
+    - Confirm Ao is implemented correctly
     - (warm‐up + cosine decay or OneCycleLR) for scheduler
-    - Perhaps I shouldn't add y_graph loss to the total loss since they represent the same thing?
     - Figure out why the gradients blow up so much
     - No layer norm for ARMA?
     

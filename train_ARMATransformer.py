@@ -189,10 +189,6 @@ def validate(valid_loader):
     # Keep track of loss for early stopping
     total_loss = 0
     
-    # Declare arrays where the predictions and corresponding targets(labels) will be stored
-    all_preds = []
-    all_targets = []
-    
     # Declare holders for metrics
     FA = 0
     F1 = 0 
@@ -238,10 +234,6 @@ def validate(valid_loader):
             # Turn tensors into NumPy arrays
             pred_nodes = pred_nodes.cpu().numpy()
             target_nodes = target_nodes.cpu().numpy()
-            
-            # Append current outputs
-            all_preds.append(pred_nodes)
-            all_targets.append(target_nodes)
             
             # Calculate current metrics
             # Graph-wise
@@ -344,9 +336,9 @@ for epoch in range(1, config["num_epochs"] + 1):
     print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
     print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
     
-    best_loc = max(loc_accuracies_arr)*100
-    best_det = max(det_accuracies_arr)*100
-    print(f"Best localization={best_loc:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, best detection={best_det:.2f} at epoch#{loc_accuracies_arr.index(best_det)}")
+    best_loc = max(loc_accuracies_arr)
+    best_det = max(det_accuracies_arr)
+    print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, best detection={best_det*100:.2f} at epoch#{loc_accuracies_arr.index(best_det)}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint every 5 epochs

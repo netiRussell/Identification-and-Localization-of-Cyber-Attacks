@@ -50,8 +50,8 @@ config = {
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
-              "weight_decay": 1e-2,
-              "n_lrWarmup_steps": 1000, # 1 batch = 1 step
+              "weight_decay": 0, # !!!!!!!!!!!!!!!!!! was 1e-2
+              "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32,
@@ -179,10 +179,6 @@ def validate(valid_loader):
     # Keep track of loss for early stopping
     total_loss = 0
     
-    # Declare arrays where the predictions and corresponding targets(labels) will be stored
-    all_preds = []
-    all_targets = []
-    
     # Declare holders for metrics
     FA = 0
     F1 = 0 
@@ -228,10 +224,6 @@ def validate(valid_loader):
             # Turn tensors into NumPy arrays
             pred_nodes = pred_nodes.cpu().numpy()
             target_nodes = target_nodes.cpu().numpy()
-            
-            # Append current outputs
-            all_preds.append(pred_nodes)
-            all_targets.append(target_nodes)
             
             # Calculate current metrics
             # Graph-wise
@@ -333,9 +325,9 @@ for epoch in range(1, config["num_epochs"] + 1):
     print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
     print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
     
-    best_loc = max(loc_accuracies_arr)*100
-    best_det = max(det_accuracies_arr)*100
-    print(f"Best localization={best_loc:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, best detection={best_det:.2f} at epoch#{loc_accuracies_arr.index(best_det)}")
+    best_loc = max(loc_accuracies_arr)
+    best_det = max(det_accuracies_arr)
+    print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, best detection={best_det*100:.2f} at epoch#{loc_accuracies_arr.index(best_det)}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint every 5 epochs
@@ -357,7 +349,6 @@ for epoch in range(1, config["num_epochs"] + 1):
         print(f"Checkpoint saved at epoch#{epoch}")
 
     # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
-    """
     if best_loss - avg_loss >= 1e-4:
         best_loss = avg_loss
         patience_counter = 0
@@ -366,7 +357,6 @@ for epoch in range(1, config["num_epochs"] + 1):
         if patience_counter >= 16:
             print(f"Early stopping: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
             break
-     """
 
 # Save checkpoint last time
 save_checkpoint({

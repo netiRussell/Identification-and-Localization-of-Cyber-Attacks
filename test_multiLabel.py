@@ -1,5 +1,6 @@
 import torch
-from model.GNNArma import GNNArma
+from model.ARMA import GNNArma
+from model.ARMA_Transformer import GNNArmaTransformer
 import random
 import numpy as np
 from sklearn.metrics import f1_score
@@ -21,7 +22,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "cgcn.tar"
+    "checkpoint_name": "checkpoint2025_07_09.pth.tar"
     }
 
 
@@ -38,6 +39,7 @@ _, _, test_loader, in_feats = preparePyGDataset(config, FDIADataset)
 
 # -- Instantiate model --
 # Define the model
+"""
 model = GNNArma(
     in_channels=config["in_channels"], 
     hidden_channels=config["hidden_channels"],
@@ -45,6 +47,19 @@ model = GNNArma(
     num_layers=config["num_layers"], 
     dropout=config["dropout"],
     num_nodes=config["num_nodes"]
+)
+"""
+model = GNNArmaTransformer(
+    in_channels=config["in_channels"],
+    hidden_channels=config["hidden_channels"],
+    out_channels=config["out_channels"],
+    num_stacks=config["num_stacks"], 
+    num_layers=config["num_layers"],
+    transformer_heads=config["transformer_heads"],
+    transformer_layers=config["transformer_layers"],
+    dropout=config["dropout"],
+    num_nodes=config["num_nodes"],
+    leakyRelu_rate=config["leakyRelu_rate"]
 )
 model = model.to(device)
 model.load_state_dict(checkpoint['model_state_dict'])
@@ -71,6 +86,7 @@ with torch.no_grad():
     honest_F1_95 = 0.0
     honest_dacc = 0.0
     
+    threshold = 0.5
     
     
     # Visualize metrics
@@ -92,7 +108,7 @@ with torch.no_grad():
         
         # -- Graph-wise output -- 
         probs = torch.sigmoid(logits_graph)
-        classification = 1 if probs[0] >= 0.5 else 0
+        classification = 1 if probs[0] >= threshold else 0
         
         if(int(classification) == int(sample.y_graph.item())):
             det_correct += 1
@@ -100,13 +116,13 @@ with torch.no_grad():
             
         
         # -- Node-wise output --
-        pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()
+        pred_nodes = (torch.sigmoid(logits_nodes) >= threshold).float()
         
         if( target_graph == 0 ):
             # - No attack case -
             
             # If prediction is 100% correct (all nodes = 0 since no attack)
-            if(np.sum(pred_nodes) == 0):
+            if(pred_nodes.sum() == 0):
                 temp_F1 = 1.0
                 
             # If at least 1 node is a mismatch (has a value of 1)    
@@ -115,7 +131,7 @@ with torch.no_grad():
         else:
             # - Attack took place case -
             # Compute F1
-            temp_F1 = f1_score(target_nodes, pred_nodes, zero_division=0)
+            temp_F1 = f1_score(target_nodes, pred_nodes.view(-1).cpu(), zero_division=0)
         
         # Sample percentage having F1 >= 95%
         if(temp_F1 >= 0.95):
@@ -154,9 +170,9 @@ with torch.no_grad():
     print(f"TOTAL({total}) F1>95% percentage of samples: {((F1_95 / total) * 100):.2f}%")
     print(f"TOTAL({total}) Detection test score: {((det_correct / total) * 100):.2f}%\n")
     
-    print("Ao: f1={((Ao_F1_95 / total) * 100):.2f}%, detection accuracy={((Ao_dacc / total) * 100):.2f}%")
-    print("Ad: f1={((Ad_F1_95 / total) * 100):.2f}%, detection accuracy={((Ad_dacc / total) * 100):.2f}%")
-    print("As: f1={((As_F1_95 / total) * 100):.2f}%, detection accuracy={((As_dacc / total) * 100):.2f}%")
-    print("Ar: f1={((Ar_F1_95 / total) * 100):.2f}%, detection accuracy={((Ar_dacc / total) * 100):.2f}%")
-    print("Honest: f1={((honest_F1_95 / total) * 100):.2f}%, detection accuracy={((honest_dacc / total) * 100):.2f}%")
+    print(f"Ao: f1={((Ao_F1_95 / 720) * 100):.2f}%, detection accuracy={((Ao_dacc / 720) * 100):.2f}%")
+    print(f"Ad: f1={((Ad_F1_95 / 720) * 100):.2f}%, detection accuracy={((Ad_dacc / 720) * 100):.2f}%")
+    print(f"As: f1={((As_F1_95 / 720) * 100):.2f}%, detection accuracy={((As_dacc / 720) * 100):.2f}%")
+    print(f"Ar: f1={((Ar_F1_95 / 720) * 100):.2f}%, detection accuracy={((Ar_dacc / 720) * 100):.2f}%")
+    print(f"Honest: f1={((honest_F1_95 / 2880) * 100):.2f}%, detection accuracy={((honest_dacc / 2880) * 100):.2f}%")
     
