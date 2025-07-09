@@ -147,7 +147,7 @@ def save_checkpoint(state, name="checkpoint", path='./saved_grads/'):
     timestamp = now.strftime("%Y_%m_%d")
     
     # Define the final path with file name
-    finalPath = path + name + timestamp + ".pth.tar"
+    finalPath = path + name + timestamp + ".tar"
     
     """
     # Make sure not to overwrite previous saved grads

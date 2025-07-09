@@ -39,10 +39,11 @@ TODOs:
     
     
     - Make sure that target matches the attacked nodes
-    - Confirm Ao is implemented correctly
+    - Confirm Ao is implemented correctly. Make sure h(x) = measurement_model follows the paper
     - (warm‐up + cosine decay or OneCycleLR) for scheduler
     - Figure out why the gradients blow up so much
     - No layer norm for ARMA?
+    - Try not to standardize(copy the unstandardized data aside, train on the standardized one and then on the regular)
     
     
     - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
@@ -203,50 +204,20 @@ def run_psse(net, z, sigma_n, nodelist):
 class Attacker_Ao:
     def __init__(self, net):
         self.net = net
-        self.n = None
-        self.z0 = None
-        self.T_z = None
-        self.T_x = None
-        self.x_hat_phasor = None
     
-    # Define zero‐order objective on full loss L = λz·Lz – λx·Lx
-    def obj(self, vth):
-        V  = vth[:self.n]
-        th = vth[self.n:]
-        
-        x_c = V * np.exp(1j * th)
-        za  = measurement_model(torch.tensor(x_c, dtype=torch.complex64), self.net)
-        
-        # stealth loss on honest measurements
-        mask_z = np.ones_like(za, bool);  
-        mask_z[self.T_z] = False
-        Lz = np.linalg.norm((za - self.z0)[mask_z], 2)
-        
-        # impact loss on honest states
-        mask_x = np.ones(self.n, bool);  
-        mask_x[self.T_x] = False
-        Lx = np.linalg.norm((x_c - self.x_hat_phasor)[mask_x], 1)
-        
-        return LAMBDA_Z * Lz - LAMBDA_Z * Lx
 
     def attack(self, z0, x_hat_phasor, V, th, T_z, T_x):
         # Number of nodes
-        self.n = len(x_hat_phasor)
-        
-        # Save values for reference from obj function
-        self.T_z = T_z
-        self.T_x = T_x
-        self.x_hat_phasor = x_hat_phasor
-        self.z0 = z0
+        n = len(x_hat_phasor)
         
         # Add noise to both V and th
-        noise = np.random.normal(0, SIGMA_N, size=V[self.T_x].shape)
-        V[self.T_x]  += noise
-        th[self.T_x] += noise
+        noise = np.random.normal(0, SIGMA_N, size=V[T_x].shape)
+        V[T_x]  += noise
+        th[T_x] += noise
         
         # Turn honest variables into torch variables:
-        z0_t     = torch.tensor(self.z0, dtype=torch.float32, device=device)
-        x_hat_t  = torch.tensor(self.x_hat_phasor,
+        z0_t     = torch.tensor(z0, dtype=torch.float32, device=device)
+        x_hat_t  = torch.tensor(x_hat_phasor,
                         dtype=torch.complex64,
                         device=device,
                         requires_grad=False)
@@ -255,12 +226,35 @@ class Attacker_Ao:
         V = torch.nn.Parameter(torch.from_numpy(V).float().to(device))
         th = torch.nn.Parameter(torch.from_numpy(th).float().to(device))
         
+        # Mask to train only chosen to be attacked nodes:
+        mask_training = torch.zeros_like(V.data)
+        mask_training[T_x] = 1.0
+        
         # Define optimizer and loss
         optimizer = torch.optim.SGD([V, th], lr=ETA)
         loss = None
 
         # Minimize loss from L = LAMBDA_Z * Lz - LAMBDA_Z * Lx
         for epoch in range(EPOCHS):
+            # How can I make Lz also affect the loss?
+            #   Maybe changing avoiding the use of pandapower and simply using the formula
+            #   from the paper will help me calculate grds for za => Lz will have effect on the loss
+            
+            # Do I understand and utilize T_z and T_x correctly? I think T_z might not be what I think it is.
+            
+            # don't they have different dimensions? x_complex[mask_x] - x_hat_t[mask_x]
+            #   x_complex = 1 dim
+            #   x_hat_t = 4 dim
+            # What is the logic behind such calculations and the way we calculate loss? What exactly are we trying
+            # to achieve with this?
+            
+            # Should I clamp into [0.9,1.1] and [−π,π] every epoch?
+            
+            # Is Lz and Lx calculated as follows: "Then, for each epoch, it obtains za using 
+            #   h(x) and consequently calculates loss term Lz as a root mean
+            #   squared error between za and zo, and Lx as a mean absolute
+            #   error between ˇx and ˆx. Eventually"      
+            
             optimizer.zero_grad()
         
             # clamp into [0.9,1.1] and [−π,π]
@@ -272,16 +266,22 @@ class Attacker_Ao:
             za = torch.from_numpy(measurement_model(x_complex, self.net)).float().to(device)
         
             # compute per-paper losses
-            mask_z = torch.ones(4*self.n, dtype=bool); 
-            mask_z[self.T_z] = False
-            mask_x = torch.ones(self.n,   dtype=bool); 
-            mask_x[self.T_x] = False
+            mask_z = torch.ones(4*n, dtype=bool); 
+            mask_z[T_z] = False
+            mask_x = torch.ones(n,   dtype=bool); 
+            mask_x[T_x] = False
         
             Lz = torch.norm( (za[mask_z] - z0_t[mask_z]), p=2 )
             Lx = torch.sum( torch.abs(x_complex[mask_x] - x_hat_t[mask_x]) )
-        
+            
             L = LAMBDA_Z * Lz - LAMBDA_Z * Lx
             L.backward()
+            
+            # zero out grads where mask_training==0
+            V.grad.data  *= mask_training
+            th.grad.data *= mask_training
+            
+            # Update parameters based on the gradients (only nodes from T_x == 1 have influence)
             optimizer.step()
             
             loss = L.item()
@@ -289,6 +289,8 @@ class Attacker_Ao:
             if loss < TAU_LOSS:
                 break
         
+        print(loss)
+        sys.exit()
         # Compute complex state variable and transform it to numpy
         x_c_opt = V * torch.exp(1j * th)
         x_c_opt = x_c_opt.cpu().detach().numpy()
@@ -301,7 +303,7 @@ class Attacker_Ao:
 def step_Ao( attacker, z0, x_hat, net, t):    
     # Initialize V and th
     V = abs(x_hat[:, 2])
-    th = x_hat[:,3] * np.pi/180
+    th = x_hat[:, 3] * np.pi/180
     
     # Compute x_phasor
     x_hat_phasor = V * np.exp(1j * th)
@@ -365,6 +367,8 @@ def worker_Ao(t_save, t_load):
         # Exclude Voltage magnitude and angle
     z_att = z_att.reshape(300, 4)
     z_att = z_att[:, :2]
+    
+    sys.exit()
     np.save(f'../final_dataset/Z_{t_save}.npy', z_att)
         
     # Estimeated X
@@ -380,13 +384,12 @@ def worker_Ao(t_save, t_load):
 def generate_Ao(start_id, finish_id, max_workers=12):
     
     # Un-paralleled generation for debugging
-    """
     for t_save in range(start_id, finish_id):
         print("Ao attack chosen")
         t_load = returnTimeStep()
         worker_Ao(t_save, t_load)
         print(f"Current cycle: #{t_save}")
-     """
+     
     
     # Prepare timesteps for the parallel execution
     # ( in order to avoid undefined behavior )
@@ -607,7 +610,8 @@ if __name__ == '__main__':
       print(f"\nNot-attacked, Current cycle: #{t}")
       generate_honest(t)
     
-    
+  
+    """
     # ! ---- Standardization ---- !
     # Load in the training dataset
     root = "../final_dataset"
@@ -647,3 +651,4 @@ if __name__ == '__main__':
         arr = (arr - mean) / std
         base = os.path.basename(fn)
         np.save(os.path.join(root, base), arr)
+    """

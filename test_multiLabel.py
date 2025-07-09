@@ -22,7 +22,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "checkpoint2025_07_09.pth.tar"
+    "checkpoint_name": "ARMA2025_07_08.pth"
     }
 
 
@@ -30,7 +30,7 @@ test_config = {
 device = selectDevice()
 
 # -- Load the saved state --
-checkpoint = torch.load(f"./saved_grads/{test_config['checkpoint_name']}", map_location=device, weights_only=False)
+checkpoint = torch.load(f"./saved_grads/{test_config['checkpoint_name']}.tar", map_location=device, weights_only=False)
 config = checkpoint['config']
 
 # -- Prepare the dataset --
@@ -39,7 +39,7 @@ _, _, test_loader, in_feats = preparePyGDataset(config, FDIADataset)
 
 # -- Instantiate model --
 # Define the model
-"""
+
 model = GNNArma(
     in_channels=config["in_channels"], 
     hidden_channels=config["hidden_channels"],
@@ -61,6 +61,7 @@ model = GNNArmaTransformer(
     num_nodes=config["num_nodes"],
     leakyRelu_rate=config["leakyRelu_rate"]
 )
+"""
 model = model.to(device)
 model.load_state_dict(checkpoint['model_state_dict'])
 
@@ -86,7 +87,7 @@ with torch.no_grad():
     honest_F1_95 = 0.0
     honest_dacc = 0.0
     
-    threshold = 0.5
+    threshold = 0.4
     
     
     # Visualize metrics
