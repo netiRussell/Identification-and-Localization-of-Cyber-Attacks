@@ -225,7 +225,7 @@ def validate(valid_loader):
             
             # Compute loss
             loss = criterion(logits_nodes, target_nodes)
-            loss += criterion(logits_graph, target_graph)
+            #loss += criterion(logits_graph, target_graph)
             total_loss += loss.item()
             
             # Apply activation function on the logits to get node-level probability
@@ -344,9 +344,9 @@ for epoch in range(1, config["num_epochs"] + 1):
     print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
     print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
     
-    best_loc = max(loc_accuracies_arr)
-    best_det = max(det_accuracies_arr)
-    print(f"Best localization={best_loc}% at epoch#{loc_accuracies_arr.index(best_loc)}, best detection={best_det} at epoch#{loc_accuracies_arr.index(best_det)}")
+    best_loc = max(loc_accuracies_arr)*100
+    best_det = max(det_accuracies_arr)*100
+    print(f"Best localization={best_loc:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, best detection={best_det:.2f} at epoch#{loc_accuracies_arr.index(best_det)}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint every 5 epochs

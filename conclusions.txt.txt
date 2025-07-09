@@ -1,4 +1,4 @@
-- layer normalization is bad for ARMA: Loss= DetAcc=
+- layer normalization is bad for ARMA: Loss=1.2xx DetAcc=0.5
 - dropout higher than 0.2 is good for ARMA: Loss= DetAcc=
-- No layer normalization and early stop, dropout = 0.2
+- No layer normalization and early stop, dropout = 0.2: Loss= DetAcc=
 - different lr?
