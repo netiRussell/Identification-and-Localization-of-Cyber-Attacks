@@ -141,6 +141,7 @@ def validate(model, valid_loader):
     F1 = 0 
     temp_F1 = 0
     recall = 0
+    precision = 0
     localization_accuracy = 0
     detection_accuracy = 0
     
@@ -175,7 +176,7 @@ def validate(model, valid_loader):
             pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
             
             # Get graph-level classification:
-            graph_pred = (logits_graph > 0).long()
+            graph_pred = (logits_graph >= 0.5).long()
             
             # Turn tensors into NumPy arrays
             pred_nodes = pred_nodes.cpu().numpy()
@@ -206,14 +207,29 @@ def validate(model, valid_loader):
                     FA += 1
             else:
                 # - Attack took place case -
-                # Compute FP, TN, and FA
+                # Compute predictions
                 FP = np.logical_and(pred_nodes == 1, target_nodes == 0).sum()
+                FN = np.logical_and(pred_nodes == 0, target_nodes == 1).sum()
+                TP = np.logical_and(pred_nodes == 1, target_nodes == 1).sum()
                 TN = np.logical_and(pred_nodes == 0, target_nodes == 0).sum()
+                
+                # Compute FA
                 FA += FP / (FP + TN)
                 
-                # Compute Recall and F1
-                temp_F1 = f1_score(target_nodes, pred_nodes, zero_division=0)
-                recall += recall_score(target_nodes, pred_nodes, zero_division=0) # DR
+                # Compute Recall(DR)
+                temp_recall = TP / (TP+FN)
+                recall += temp_recall
+                
+                # Compute Precision
+                temp_prec = TP / (TP+FP)
+                precision += temp_prec
+                
+                # Compute F1
+                if(temp_prec == 0 or temp_recall == 0):
+                    temp_F1 = 0
+                else:
+                    print(temp_prec, temp_recall)
+                    temp_F1 = 2*((temp_prec*temp_recall)/(temp_prec+temp_recall))
                 
                 # Compute a strict match
                 if( np.array_equal(pred_nodes, target_nodes) ):
@@ -224,17 +240,9 @@ def validate(model, valid_loader):
                  F1 += 1
                 
         
-
-        # Concatenate across batches
-        all_preds   = np.asarray(all_preds)
-        all_targets = np.asarray(all_targets)
-    
-        # Metrics
-        precision = precision_score(all_targets, all_preds, zero_division=0, average="micro")
-        
         # Number of elements in metrices (is used to get mean)
         n_elem_metrices = len(valid_loader)
-        return precision, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
+        return precision/n_elem_metrices, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
 # -- Optuna functions --
@@ -340,7 +348,7 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "studyARMA_"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
+study_name = "studyARMA_accuracy"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 

@@ -37,13 +37,11 @@ TODOs:
     - Multiple random restarts of attack() if loss > TAU_LOSS
     - Lz might not affect the loss because measurement_model is not differentiable
     
+    - (warm‐up + cosine decay or OneCycleLR) for scheduler
+    - Perhaps I shouldn't add y_graph loss to the total loss since they represent the same thing?
+    - Figure out why the gradients blow up so much
+    - No layer norm for ARMA?
     
-    - 600 warmup steps are the best so far for ARMA. Try 700
-    - Figure out the best max_norm
-    - Regenerate the dataset
-
-    - Use GraphNorm or BatchNorm on the node features, and LayerNorm before the Transformer.
-    - Write down info on LR with focus on F1 and then switch the focus to detection of FDIA  and rerun optuna
     
     - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
         of the reasons why my models don't fully converge

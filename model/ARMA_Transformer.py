@@ -22,9 +22,7 @@ class GNNArma(nn.Module):
                               num_stacks=num_stacks, num_layers=num_layers)
         
         # Layer Normalizations
-        self.layerNorm1 = nn.LayerNorm(hidden_channels)
-        self.layerNorm2 = nn.LayerNorm(hidden_channels)
-        self.layerNorm3 = nn.LayerNorm(out_channels)
+        self.layerNorm = nn.LayerNorm(out_channels)
         
         # Dropouts
         self.dropout1 = nn.Dropout(dropout)
@@ -37,7 +35,6 @@ class GNNArma(nn.Module):
     def forward(self, x, edge_index, weights):
         # First ARMA layer
         x = self.conv1(x, edge_index, weights)
-        x = self.layerNorm1(x)
         x = self.leakyRelu(x)
         x = self.dropout1(x)
         if not torch.isfinite(x).all():
@@ -45,7 +42,6 @@ class GNNArma(nn.Module):
         
         # Second ARMA layer
         x = self.conv2(x, edge_index, weights)
-        x = self.layerNorm2(x)
         x = self.leakyRelu(x)
         x = self.dropout2(x)
         if not torch.isfinite(x).all():
@@ -53,7 +49,7 @@ class GNNArma(nn.Module):
         
         # Third ARMA layer
         x = self.conv3(x, edge_index, weights)
-        x = self.layerNorm3(x)
+        x = self.layerNorm(x)
         x = self.leakyRelu(x)
         x = self.dropout3(x)
         if not torch.isfinite(x).all():

@@ -4,6 +4,9 @@ import torch.nn.functional as F
 from torch_geometric.nn import ARMAConv, BatchNorm
 from torch_geometric.utils import to_dense_batch
 
+# to be deleted
+import sys
+
 class GNNArma(nn.Module):
     """
     GNN encoder using ARMA filters.
@@ -37,9 +40,7 @@ class GNNArma(nn.Module):
         self.classifier = nn.Linear(1, 1)
         
         # Layer Normalizations
-        self.layerNorm1 = nn.LayerNorm(hidden_channels)
-        self.layerNorm2 = nn.LayerNorm(hidden_channels)
-        self.layerNorm3 = nn.LayerNorm(1)
+        #self.layerNorm = nn.LayerNorm(1)
         
         # Dropouts
         self.dropout1 = nn.Dropout(dropout)
@@ -50,7 +51,6 @@ class GNNArma(nn.Module):
     def forward(self, x, edge_index, weights, batch):
         # First ARMA layer
         x = self.ARMAconv1(x, edge_index, weights)
-        x = self.layerNorm1(x)
         x = F.relu(x)
         x = self.dropout1(x)
         if not torch.isfinite(x).all():
@@ -58,7 +58,6 @@ class GNNArma(nn.Module):
         
         # Second ARMA layer
         x = self.ARMAconv2(x, edge_index, weights)
-        x = self.layerNorm1(2)
         x = F.relu(x)
         x = self.dropout2(x)
         if not torch.isfinite(x).all():
@@ -66,7 +65,7 @@ class GNNArma(nn.Module):
         
         # Third ARMA layer
         x = self.ARMAconv3(x, edge_index, weights)
-        x = self.layerNorm3(x)
+        #x = self.layerNorm(x)
         x = F.relu(x)
         x = self.dropout3(x)
         if not torch.isfinite(x).all():

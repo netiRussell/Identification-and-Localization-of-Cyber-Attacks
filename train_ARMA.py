@@ -51,7 +51,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
               "weight_decay": 1e-2,
-              "n_lrWarmup_steps": 600, # 1 batch = 1 step
+              "n_lrWarmup_steps": 1000, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32,
@@ -106,11 +106,9 @@ scaler = GradScaler(enabled=False)
 
 
 # -- Training & evaluation functions --
-# TO BE DELETED
-gradSpike = False
 def train_epoch(epoch):
     # TO BE DELETED
-    global gradSpike
+    gradSpike = False
     
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
@@ -128,7 +126,7 @@ def train_epoch(epoch):
         with autocast(device_type=device.type, enabled=use_cuda):
             # Get targets for the batch
             target_nodes = minibatch.y
-            target_graph = minibatch.y_graph
+            #target_graph = minibatch.y_graph
             
             # Get model's raw output (logits)
             logits_nodes, logits_graph = model(minibatch.x, 
@@ -138,7 +136,7 @@ def train_epoch(epoch):
             
             # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += criterion(logits_graph, target_graph.squeeze(0))
+            #loss += criterion(logits_graph, target_graph.squeeze(0))
             total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
@@ -190,19 +188,14 @@ def validate(valid_loader):
     F1 = 0 
     temp_F1 = 0
     recall = 0
+    precision = 0
     localization_accuracy = 0
     detection_accuracy = 0
-    
-    # TO BE DELETED:
-    counter = 0
     
     # Make sure grads of the model won't be affected
     with torch.no_grad():
         for batch in valid_loader:
             batch = batch.to(device)
-            
-            # TO BE DELETED
-            counter += 1
 
             # Get model's raw output(logits)
             logits_nodes, logits_graph = model(
@@ -230,8 +223,7 @@ def validate(valid_loader):
             pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
             
             # Get graph-level classification:
-            graph_pred = (logits_graph > 0).long()
-            print(f"MUST BE THE LOGICALLY SAME: {logits_graph}, {graph_pred}")
+            graph_pred = (logits_graph >= 0.5).long()
             
             # Turn tensors into NumPy arrays
             pred_nodes = pred_nodes.cpu().numpy()
@@ -262,17 +254,33 @@ def validate(valid_loader):
                     FA += 1
             else:
                 # - Attack took place case -
-                # Compute FP, TN, and FA
+                # Compute predictions
                 FP = np.logical_and(pred_nodes == 1, target_nodes == 0).sum()
+                FN = np.logical_and(pred_nodes == 0, target_nodes == 1).sum()
+                TP = np.logical_and(pred_nodes == 1, target_nodes == 1).sum()
                 TN = np.logical_and(pred_nodes == 0, target_nodes == 0).sum()
+                
+                # Compute FA
                 FA += FP / (FP + TN)
                 
-                # Compute Recall and F1
-                temp_F1 = f1_score(target_nodes, pred_nodes, zero_division=0)
-                recall += recall_score(target_nodes, pred_nodes, zero_division=0) # DR
+                # Compute Recall(DR)
+                temp_recall = TP / (TP+FN)
+                recall += temp_recall
+                
+                # Compute Precision
+                temp_prec = TP / (TP+FP)
+                precision += temp_prec
+                
+                # Compute F1
+                if(temp_prec == 0 or temp_recall == 0):
+                    temp_F1 = 0
+                else:
+                    temp_F1 = 2*((temp_prec*temp_recall)/(temp_prec+temp_recall))
+                
                 
                 # Compute a strict match
                 if( np.array_equal(pred_nodes, target_nodes) ):
+                    print("+1 Strict match")
                     localization_accuracy += 1
             
             # Sample percentage having F1 >= 95%
@@ -280,22 +288,13 @@ def validate(valid_loader):
                  F1 += 1
             
             # TO BE DELETED:
-            print("Current F1: {temp_F1}, Num of buses with f1 > 95%: {F1}")
+            print(f"Attack: {target_graph}/{graph_pred}, Current F1: {temp_F1:.2f}, Num of buses with f1 > 95%: {F1}")
+            print(f"Number of ones exptected: {target_nodes.sum()}, predicted: {pred_nodes.sum()}\n")
                 
-        
-
-        # Concatenate across batches
-        all_preds   = np.asarray(all_preds)
-        all_targets = np.asarray(all_targets)
-    
-        # Metrics
-        precision = precision_score(all_targets, all_preds, zero_division=0, average="micro")
         
         # Number of elements in metrices (is used to get mean)
         n_elem_metrices = len(valid_loader)
-        # TO BE DELETED:
-        print(f"Must be the same, delete `counter` after debug: {counter}, {n_elem_metrices}")
-        return precision, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
+        return precision/n_elem_metrices, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -311,6 +310,7 @@ det_accuracies_arr = []
 f1_arr = []
 rec_arr = [] # DR
 fa_arr = []
+prec = 0
 
 for epoch in range(1, config["num_epochs"] + 1):
     # Conduct a training for a single epoch
@@ -332,22 +332,29 @@ for epoch in range(1, config["num_epochs"] + 1):
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
     print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
     print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
+    
+    best_loc = max(loc_accuracies_arr)
+    best_det = max(det_accuracies_arr)
+    print(f"Best localization={best_loc}% at epoch#{loc_accuracies_arr.index(best_loc)}, best detection={best_det} at epoch#{loc_accuracies_arr.index(best_det)}")
     print("----------------------------------------------------\n\n")
 
-    # Save checkpoint
-    save_checkpoint({
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'config': config,
-        'currentEpoch': epoch,
-        'trainingTime': time.time() - start,
-        'loc_accuracies': np.array(loc_accuracies_arr),
-        'det_accuracies': np.array(det_accuracies_arr),
-        'prec': prec,
-        'rec': rec_arr,
-        'f1': f1_arr,
-        'fa': fa_arr
-    })
+    # Save checkpoint every 5 epochs
+    if(epoch % 5 == 0):
+        save_checkpoint({
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'config': config,
+            'currentEpoch': epoch,
+            'trainingTime': time.time() - start,
+            'loc_accuracies': np.array(loc_accuracies_arr),
+            'det_accuracies': np.array(det_accuracies_arr),
+            'prec': prec,
+            'rec': rec_arr,
+            'f1': f1_arr,
+            'fa': fa_arr
+        }, "ARMA")
+        
+        print(f"Checkpoint saved at epoch#{epoch}")
 
     # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
     if best_loss - avg_loss >= 1e-4:
@@ -358,4 +365,19 @@ for epoch in range(1, config["num_epochs"] + 1):
         if patience_counter >= 16:
             print(f"Early stopping: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
             break
+
+# Save checkpoint last time
+save_checkpoint({
+    'model_state_dict': model.state_dict(),
+    'optimizer_state_dict': optimizer.state_dict(),
+    'config': config,
+    'currentEpoch': config["num_epochs"],
+    'trainingTime': time.time() - start,
+    'loc_accuracies': np.array(loc_accuracies_arr),
+    'det_accuracies': np.array(det_accuracies_arr),
+    'prec': prec,
+    'rec': rec_arr,
+    'f1': f1_arr,
+    'fa': fa_arr
+}, "ARMA")
 

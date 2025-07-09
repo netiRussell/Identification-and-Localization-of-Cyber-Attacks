@@ -125,7 +125,7 @@ def load_honest( t_load, number_nodes=300 ):
   return Z, mask
 
 
-def save_checkpoint(state, path='./saved_grads/'):
+def save_checkpoint(state, name="checkpoint", path='./saved_grads/'):
     """
     Saves current progress as a .tar file
 
@@ -147,7 +147,7 @@ def save_checkpoint(state, path='./saved_grads/'):
     timestamp = now.strftime("%Y_%m_%d")
     
     # Define the final path with file name
-    finalPath = path + "checkpoint" + timestamp + ".pth.tar"
+    finalPath = path + name + timestamp + ".pth.tar"
     
     """
     # Make sure not to overwrite previous saved grads
@@ -274,8 +274,8 @@ def preparePyGDataset(config, FDIADataset):
     test_dataset = FDIADataset(test_indices, config["dataset_root"])
 
     # Define loaders for each data subset to sequentially load batches
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-    valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, pin_memory=True)
+    valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # Get input features (Size of X in the first dimension)
