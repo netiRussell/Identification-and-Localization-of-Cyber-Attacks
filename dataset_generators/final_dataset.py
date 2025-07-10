@@ -34,17 +34,18 @@ Logic for non-sequential attacks:
 """
 
 TODOs:
-    - Multiple random restarts of attack() if loss > TAU_LOSS
-    - Lz might not affect the loss because measurement_model is not differentiable
-    
-    
-    - Make sure that target matches the attacked nodes
-    - Confirm Ao is implemented correctly. Make sure h(x) = measurement_model follows the paper
-    - (warm‐up + cosine decay or OneCycleLR) for scheduler
-    - Figure out why the gradients blow up so much
-    - No layer norm for ARMA?
     - Try not to standardize(copy the unstandardized data aside, train on the standardized one and then on the regular)
     
+    - Make sure that target matches the attacked nodes
+    - Confirm Ao is implemented correctly. To do so, go over the notes in attacker and the paper
+    
+    - (warm‐up + cosine decay) for scheduler
+    - Figure out why the gradients blow up so much
+    - No layer norm for ARMA?
+    
+    
+    - Multiple random restarts of attack() if loss > TAU_LOSS
+    - Lz might not affect the loss because measurement_model is not differentiable
     
     - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
         of the reasons why my models don't fully converge
@@ -59,6 +60,9 @@ TODOs:
 # # # # # # # # # # # # # #  #
 # ---- Global variables ---- #
 # # # # # # # # # # # # # #  #
+
+# Avoid scientific notation
+torch.set_printoptions(sci_mode=False)
 
 dataset_config = {
     "normal_scaling": False,
@@ -107,7 +111,7 @@ irrelevant_buses = gen_buses | zero_inj_buses
 # Hyperparameters for Ao
 SIGMA_N = 0.005       # initial disturbance variance
 LAMBDA_Z = 1.0        # weight for measurement loss
-LAMBDA_Z = 1.0        # weight for state loss
+LAMBDA_X = 1.0        # weight for state loss
 ETA = 0.001           # learning rate for optimizer
 EPOCHS = 1000         # number of attack optimization epochs
 TAU_FREQ = 1.0        # attack frequency threshold
@@ -122,24 +126,24 @@ device = selectDevice()
 # ---- Functions ---- #
 # # # # # # # # # # # #
 
-# Utility: map complex state to pandapower net measurements
-def measurement_model(x_complex, net):
-    # Copy the net
-    net_copy = copy.deepcopy(net)
+# Utility: map complex state to net measurements
+def measurement_model(x_complex, Ybus, baseMVA):
+    # Compute complex power injection S = V * conj(I) = V * conj(Ybus @ V)
+    S = x_complex * torch.conj(Ybus @ x_complex)
     
-    # Calculate voltage and angle for each bus
-    mags = torch.abs(x_complex).detach().cpu().numpy()
-    angs = torch.angle(x_complex).detach().cpu().numpy() * 180/np.pi
+    # Extract real and imaginary parts
+    P = -S.real.float()*baseMVA      # active‐power injections
+    Q = -S.imag.float()*baseMVA      # reactive‐power injections
     
-    # Assign voltage and angle to each bus
-    net_copy.bus["vm_pu"] = mags
-    net_copy.bus["va_degree"] = angs
+    # Direct measurements
+    V_mag = torch.abs(x_complex).float()
+    angle_rad = torch.angle(x_complex).float()
     
-    # Run power flow to get measurements at this fake operating point
-    pp.runpp(net_copy, init='flat')
+    # Convert angle to degrees
+    angle_deg = angle_rad * (180.0 / torch.pi)
     
     # Extract bus measurements: p_mw, q_mvar, vm_pu, va_degree
-    res = net_copy.res_bus[['p_mw','q_mvar','vm_pu','va_degree']].values.flatten()
+    res = torch.cat([P, Q, V_mag, angle_deg], dim=0).flatten().to(device)
     
     return res
 
@@ -202,8 +206,9 @@ def run_psse(net, z, sigma_n, nodelist):
 
 
 class Attacker_Ao:
-    def __init__(self, net):
-        self.net = net
+    def __init__(self, Ybus, baseMVA):
+        self.Ybus = Ybus
+        self.baseMVA = baseMVA
     
 
     def attack(self, z0, x_hat_phasor, V, th, T_z, T_x):
@@ -231,22 +236,30 @@ class Attacker_Ao:
         mask_training[T_x] = 1.0
         
         # Define optimizer and loss
-        optimizer = torch.optim.SGD([V, th], lr=ETA)
+        optimizer = torch.optim.Adam([V, th], lr=ETA)
         loss = None
+        
+        # Define masks for T_z and T_x
+        mask_z = torch.ones(4*n, dtype=bool); 
+        mask_z[T_z] = False
+        mask_x = torch.ones(n, dtype=bool); 
+        mask_x[T_x] = False
+        num_z = mask_z.sum().float()
+        num_x = mask_x.sum().float()
 
         # Minimize loss from L = LAMBDA_Z * Lz - LAMBDA_Z * Lx
         for epoch in range(EPOCHS):
-            # How can I make Lz also affect the loss?
-            #   Maybe changing avoiding the use of pandapower and simply using the formula
-            #   from the paper will help me calculate grds for za => Lz will have effect on the loss
+            # The goal of this training is to find a new x̃ that:
+            #   Maximally corrupts the measurements in Tₓ (the attacked nodes),
+            #   While keeping the measurements outside Tₓ (i.e. all i∉Tₓ) as close as possible to the originals.
             
+            """
             # Do I understand and utilize T_z and T_x correctly? I think T_z might not be what I think it is.
+            # Is my measurement_model function correct conceptually?  
             
-            # don't they have different dimensions? x_complex[mask_x] - x_hat_t[mask_x]
-            #   x_complex = 1 dim
-            #   x_hat_t = 4 dim
-            # What is the logic behind such calculations and the way we calculate loss? What exactly are we trying
-            # to achieve with this?
+            # How can I make Lz also affect the loss?
+            #   Maybe avoiding the use of pandapower and simply using the formula
+            #   from the paper will help me calculate grds for za => Lz will have effect on the loss
             
             # Should I clamp into [0.9,1.1] and [−π,π] every epoch?
             
@@ -254,6 +267,8 @@ class Attacker_Ao:
             #   h(x) and consequently calculates loss term Lz as a root mean
             #   squared error between za and zo, and Lx as a mean absolute
             #   error between ˇx and ˆx. Eventually"      
+            
+            """
             
             optimizer.zero_grad()
         
@@ -263,18 +278,13 @@ class Attacker_Ao:
         
             # build phasors and analytic measurements
             x_complex = V * torch.exp(1j * th)
-            za = torch.from_numpy(measurement_model(x_complex, self.net)).float().to(device)
+            za = measurement_model(x_complex, self.Ybus, self.baseMVA)
         
             # compute per-paper losses
-            mask_z = torch.ones(4*n, dtype=bool); 
-            mask_z[T_z] = False
-            mask_x = torch.ones(n,   dtype=bool); 
-            mask_x[T_x] = False
-        
-            Lz = torch.norm( (za[mask_z] - z0_t[mask_z]), p=2 )
-            Lx = torch.sum( torch.abs(x_complex[mask_x] - x_hat_t[mask_x]) )
+            Lz = torch.norm( (za[mask_z] - z0_t[mask_z]), p=2 ) / torch.sqrt(num_z)
+            Lx = torch.sum( torch.abs(x_complex[mask_x] - x_hat_t[mask_x]) ) / num_x
             
-            L = LAMBDA_Z * Lz - LAMBDA_Z * Lx
+            L = LAMBDA_Z * Lz - LAMBDA_X * Lx
             L.backward()
             
             # zero out grads where mask_training==0
@@ -289,14 +299,12 @@ class Attacker_Ao:
             if loss < TAU_LOSS:
                 break
         
-        print(loss)
-        sys.exit()
-        # Compute complex state variable and transform it to numpy
+        # Compute complex state variable
         x_c_opt = V * torch.exp(1j * th)
-        x_c_opt = x_c_opt.cpu().detach().numpy()
+        #x_c_opt = (V * torch.exp(1j*th)).detach().cpu()
         
         # Get new Z
-        za_opt = measurement_model(torch.tensor(x_c_opt, dtype=torch.complex64), self.net)
+        za_opt = measurement_model(x_c_opt, self.Ybus, self.baseMVA)
         return za_opt, loss
 
 # Generate function per timestep
@@ -350,13 +358,19 @@ def step_Ao( attacker, z0, x_hat, net, t):
 
 
 def worker_Ao(t_save, t_load):
-    # IEEE300 network
+    # Generate Ybus and base unit of measurements from the current network
     net = pn.case300()
-    attacker = Attacker_Ao(net)
+    pp.runpp(net)                              # just to build net._ppc
+    Ybus = net._ppc['internal']['Ybus']
+    Ybus = torch.tensor(Ybus.toarray(), dtype=torch.complex64, device=device)
+    baseMVA = net.sn_mva
+    
+    # Initialize the attacker with the Ybus and the unit computed
+    attacker = Attacker_Ao(Ybus, baseMVA)
 
     # Input holders
     z0 = np.load(f"../init_dataset/Z_{t_load}.npy")
-    x_hat = np.load(f"../init_dataset/Z_{t_load}.npy")
+    x_hat = np.load(f"../init_dataset/X_{t_load}.npy")
     
     # Flatten z0 for future calculations
     z0 = z0.flatten()
@@ -368,7 +382,6 @@ def worker_Ao(t_save, t_load):
     z_att = z_att.reshape(300, 4)
     z_att = z_att[:, :2]
     
-    sys.exit()
     np.save(f'../final_dataset/Z_{t_save}.npy', z_att)
         
     # Estimeated X
@@ -382,14 +395,14 @@ def worker_Ao(t_save, t_load):
 
 
 def generate_Ao(start_id, finish_id, max_workers=12):
-    
+    """
     # Un-paralleled generation for debugging
     for t_save in range(start_id, finish_id):
         print("Ao attack chosen")
         t_load = returnTimeStep()
         worker_Ao(t_save, t_load)
         print(f"Current cycle: #{t_save}")
-     
+    """
     
     # Prepare timesteps for the parallel execution
     # ( in order to avoid undefined behavior )
