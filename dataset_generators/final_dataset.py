@@ -305,7 +305,7 @@ class Attacker_Ao:
         
         # Get new Z
         za_opt = measurement_model(x_c_opt, self.Ybus, self.baseMVA)
-        return za_opt, loss
+        return za_opt.detach().cpu().numpy(), loss
 
 # Generate function per timestep
 def step_Ao( attacker, z0, x_hat, net, t):    
@@ -325,7 +325,7 @@ def step_Ao( attacker, z0, x_hat, net, t):
     z, loss = attacker.attack(z0, x_hat_phasor, V, th, T_z, T_x)
     # — build a length-n vector of 0/1 labels —
     y = np.zeros_like(x_hat_phasor, dtype=int)
-    y[T_x] = 1
+    y[T_x] = 1 # TODO: ! make sure the target is correct
     
     """
     print(loss)
@@ -375,6 +375,7 @@ def worker_Ao(t_save, t_load):
     # Flatten z0 for future calculations
     z0 = z0.flatten()
     
+    # Compute Z and X
     z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t_save)
     
     # Save current attacked sample
