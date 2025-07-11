@@ -86,7 +86,7 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
     # Create an empty mask
     mask = np.full(number_nodes, False, dtype="bool")
     
-    # Fill the mask with the buses to be attacked
+    # Fill the mask with the buses to be attacked (otherwise => easy to detect)
     mask[T_x] = True
     
     # Z = Node features array

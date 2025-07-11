@@ -275,7 +275,11 @@ def validate(valid_loader):
                 recall += temp_recall
                 
                 # Compute Precision
-                temp_prec = TP / (TP+FP)
+                prec_denom = (TP+FP)
+                if( prec_denom == 0 ):
+                    temp_prec = 0
+                else:
+                    temp_prec = TP / prec_denom
                 precision += temp_prec
                 
                 # Compute F1
@@ -342,7 +346,7 @@ for epoch in range(1, config["num_epochs"] + 1):
     
     best_loc = max(loc_accuracies_arr)
     best_det = max(det_accuracies_arr)
-    print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, best detection={best_det*100:.2f} at epoch#{loc_accuracies_arr.index(best_det)}")
+    print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, Best detection={best_det*100:.2f} at epoch#{det_accuracies_arr.index(best_det)}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint every 5 epochs

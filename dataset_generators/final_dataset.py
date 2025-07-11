@@ -447,7 +447,8 @@ def generate_Ad(t_save):
     # Extract all node features
     P = Z[:, 0]
     Q = Z[:, 1]
-  
+    
+    """
     # Don't follow outliners, so that the attack is not as easy to detect
     # Get mean and STD for 90% of P
     lo, hi = np.percentile(P, [5,95])
@@ -458,14 +459,15 @@ def generate_Ad(t_save):
     lo, hi = np.percentile(Q, [5,95])
     Q_trim = Q[(Q>=lo)&(Q<=hi)]
     Q_mu, Q_std  = Q_trim.mean(), Q_trim.std()
-    
-    # Attack buses that have some load only (otherwise => easy to detect)
-    mask_P = mask & (P != 0)
-    mask_Q = mask & (Q != 0)
   
     # Apply the distribution-based attack on the marked buses
-    Z[mask_P, 0] = np.random.normal(P_mu, P_std, size=mask_P.sum())
-    Z[mask_Q, 1] = np.random.normal(Q_mu, Q_std, size=mask_Q.sum())
+    Z[mask, 0] = np.random.normal(P_mu, P_std, size=mask_P.sum())
+    Z[mask, 1] = np.random.normal(Q_mu, Q_std, size=mask_Q.sum())
+    """
+    
+    # Apply the distribution-based attack on the marked buses
+    Z[mask, 0] = np.random.normal(P.mean(), P.std(), size=mask.sum())
+    Z[mask, 1] = np.random.normal(Q.mean(), Q.std(), size=mask.sum())
     
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]

@@ -221,7 +221,11 @@ def validate(model, valid_loader):
                 recall += temp_recall
                 
                 # Compute Precision
-                temp_prec = TP / (TP+FP)
+                prec_denom = (TP+FP)
+                if( prec_denom == 0 ):
+                    temp_prec = 0
+                else:
+                    temp_prec = TP / prec_denom
                 precision += temp_prec
                 
                 # Compute F1
