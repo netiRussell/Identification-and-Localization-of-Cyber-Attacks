@@ -13,7 +13,7 @@ import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 from torch.nn.utils import clip_grad_norm_
 from torch_geometric.utils import to_dense_batch
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 
 
 from dataset import FDIADataset
@@ -21,6 +21,7 @@ from dataset_generators.functions import save_checkpoint, preparePyGDataset, sel
 
 # TODO: delete at the final stage
 import sys
+import matplotlib.pyplot as plt
 
 
 # -- Clear cache from the previous training --
@@ -50,7 +51,7 @@ config = {
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
-              "weight_decay": 0, # !!!!!!!!!!!!!!!!!! was 1e-2
+              "weight_decay": 1e-2,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "in_channels": 2,
@@ -94,8 +95,22 @@ def lr_lambda(current_step: int):
         return float(current_step) / config["n_lrWarmup_steps"]
     return 1.0  # keep base_lr after warm-up
 
-scheduler = LambdaLR(optimizer, lr_lambda)
+scheduler1 = LambdaLR(optimizer, lr_lambda)
+scheduler2 = CosineAnnealingLR(optimizer, T_max=90*config["num_epochs"])
+scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[config["n_lrWarmup_steps"]])
 
+"""
+lr_arr = []
+for t in range(90*config["num_epochs"]):
+    lr_arr.append(scheduler.get_last_lr())
+    scheduler.step()
+
+flat_lr_arr = [x for sub in lr_arr for x in sub]
+
+plt.plot(range(len(lr_arr)), flat_lr_arr )
+plt.show()
+sys.exit()
+"""
 
 # Scaler and Autocast 
 # (seems to have negative impact on the training; hence, turned off)

@@ -13,7 +13,7 @@ import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 from torch.nn.utils import clip_grad_norm_
 from torch_geometric.utils import to_dense_batch
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 
 
 from dataset import FDIADataset
@@ -92,7 +92,9 @@ def lr_lambda(current_step: int):
         return float(current_step) / config["n_lrWarmup_steps"]
     return 1.0  # keep base_lr after warm-up
 
-scheduler = LambdaLR(optimizer, lr_lambda)
+scheduler1 = LambdaLR(optimizer, lr_lambda)
+scheduler2 = CosineAnnealingLR(optimizer, T_max=90*config["num_epochs"])
+scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[config["n_lrWarmup_steps"]])
 
 # - Scaler and Autocast -
 # (seems to have negative impact on the training; hence, turned off)

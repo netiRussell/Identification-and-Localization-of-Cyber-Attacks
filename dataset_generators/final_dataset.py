@@ -35,6 +35,9 @@ Logic for non-sequential attacks:
 
 TODOs:
     - Try not to standardize(copy the unstandardized data aside, train on the standardized one and then on the regular)
+    - I think generators are skipped to be attacked but are still marked as attacked in the generated targets
+        Check on Ao
+        Check on regular attacks
     
     - Make sure that target matches the attacked nodes
     - Confirm Ao is implemented correctly. To do so, go over the notes in attacker and the paper
