@@ -56,9 +56,9 @@ config = {
               
               "in_channels": 2,
               "hidden_channels": 32,
-              "num_stacks": 3,  # K
-              "num_layers": 5,
-              "dropout": 0.5, 
+              "num_stacks": 4,  # K
+              "num_layers": 6,
+              "dropout": 0.4, 
               "num_nodes": 300,
           }
 
@@ -85,7 +85,6 @@ model = GNNArma(
 model = model.to(device)
 
 # - Define the criterion, optimizer, and scheduler -
-#criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
 criterion = nn.BCEWithLogitsLoss()
 
 optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
@@ -95,10 +94,12 @@ def lr_lambda(current_step: int):
         return float(current_step) / config["n_lrWarmup_steps"]
     return 1.0  # keep base_lr after warm-up
 
+
 scheduler1 = LambdaLR(optimizer, lr_lambda)
 scheduler2 = CosineAnnealingLR(optimizer, T_max=90*config["num_epochs"])
 scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[config["n_lrWarmup_steps"]])
 
+#scheduler = CosineAnnealingLR(optimizer, T_max=90*6) # every 6 epochs (90 batches=steps per epoch)
 """
 lr_arr = []
 for t in range(90*config["num_epochs"]):
@@ -160,8 +161,8 @@ def train_epoch(epoch):
         # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
         if (minibatch_id+1) % accum_steps == 0:
             # Clip gradients so their total L2 norm ≤ 1
-            total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
-            if(total_norm > 1):
+            total_norm = clip_grad_norm_(model.parameters(), max_norm=10.0)
+            if(total_norm > 10):
                 gradSpike = True
             print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
             
@@ -366,7 +367,8 @@ for epoch in range(1, config["num_epochs"] + 1):
         }, "ARMA")
         
         print(f"Checkpoint saved at epoch#{epoch}")
-
+        
+    """
     # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
     if best_loss - avg_loss >= 1e-4:
         best_loss = avg_loss
@@ -376,6 +378,7 @@ for epoch in range(1, config["num_epochs"] + 1):
         if patience_counter >= 16:
             print(f"Early stopping: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
             break
+    """
 
 # Save checkpoint last time
 save_checkpoint({

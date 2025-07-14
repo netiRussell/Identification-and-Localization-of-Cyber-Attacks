@@ -185,14 +185,13 @@ def validate(model, valid_loader):
 
 
 # -- Optuna functions --
-def define_model(trial, dropout, u, Ks):
+def define_model( dropout, u, Ks):
     model = CGCN(
         in_channels=in_feats,
         u=u,
         Ks=Ks,
         dropout=dropout,
         num_nodes = config["num_nodes"],
-        trial = trial
     )
     
     return model
@@ -214,7 +213,7 @@ def objective(trial):
     Ks = trial.suggest_categorical("Ks", [5, 7, 9])
     
     # Generate the model.
-    model = define_model(trial, dropout, u, Ks).to(device)
+    model = define_model(dropout, u, Ks).to(device)
     
     # Generate the lr
     lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)

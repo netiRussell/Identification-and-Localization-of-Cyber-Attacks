@@ -86,7 +86,6 @@ model = GNNArmaTransformer(
 model = model.to(device)
 
 # - Define the criterion, optimizer, and scheduler -
-#criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
 criterion = nn.BCEWithLogitsLoss()
 
 optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
@@ -158,7 +157,7 @@ def train_epoch(epoch):
         if (minibatch_id+1) % accum_steps == 0:
             # Clip gradients so their total L2 norm ≤ 1
             total_norm = clip_grad_norm_(model.parameters(), max_norm=10.0)
-            if(total_norm > 1):
+            if(total_norm > 10):
                 gradSpike = True
             print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
             
@@ -364,7 +363,7 @@ for epoch in range(1, config["num_epochs"] + 1):
         }, "Transformer")
         
         print(f"Checkpoint saved at epoch#{epoch}")
-
+    
     # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
     if best_loss - avg_loss >= 1e-4:
         best_loss = avg_loss

@@ -40,7 +40,7 @@ class GNNArma(nn.Module):
         self.classifier = nn.Linear(1, 1)
         
         # Layer Normalizations
-        self.layerNorm = nn.LayerNorm(1)
+        self.layerNorm = nn.LayerNorm(hidden_channels)
         
         # Dropouts
         self.dropout1 = nn.Dropout(dropout)
@@ -51,6 +51,7 @@ class GNNArma(nn.Module):
     def forward(self, x, edge_index, weights, batch):
         # First ARMA layer
         x = self.ARMAconv1(x, edge_index, weights)
+        x = self.layerNorm(x)
         x = F.relu(x)
         x = self.dropout1(x)
         if not torch.isfinite(x).all():
@@ -65,7 +66,6 @@ class GNNArma(nn.Module):
         
         # Third ARMA layer
         x = self.ARMAconv3(x, edge_index, weights)
-        x = self.layerNorm(x)
         x = F.relu(x)
         x = self.dropout3(x)
         if not torch.isfinite(x).all():

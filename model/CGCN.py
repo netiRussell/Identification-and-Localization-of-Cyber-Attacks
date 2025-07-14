@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import ChebConv, BatchNorm
+from torch_geometric.nn import ChebConv
 import torch.nn.utils as utils
 from torch_geometric.utils import to_dense_batch
+from torch_geometric.utils import get_laplacian
 
 # TODO: to be deleted
 import sys
@@ -20,38 +21,41 @@ class CGCN(nn.Module):
       
       Batch normalization layers help
     """
-    def __init__(self, in_channels, u, Ks, dropout=0.1, num_nodes=2848, trial=None ):
+    def __init__(self, in_channels, u, Ks, dropout=0.1, num_nodes=300 ):
         super(CGCN, self).__init__()
         
+        # Local parameter
         self.num_nodes = num_nodes
+     
         
+        # Chebuchev Conv layers
         self.chebConv1 = ChebConv(in_channels, u, Ks)
-        self.dropout1 = nn.Dropout(dropout)
-
         self.chebConv2 = ChebConv(u, u, Ks)
-        self.dropout2 = nn.Dropout(dropout)
-
         self.chebConv3 = ChebConv(u, u, Ks)
-        self.dropout3 = nn.Dropout(dropout)
-
         self.chebConv4 = ChebConv(u, u, Ks)
+        # self.chebConv5 = ChebConv(u, u, Ks)
+    
+        
+        # Layer Normalizations
+        self.layerNorm1 = nn.LayerNorm(u)
+        self.layerNorm3 = nn.LayerNorm(u)
+        
+        
+        # Dropouts
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
         self.dropout4 = nn.Dropout(dropout)
+        #self.dropout5 = nn.Dropout(dropout)
         
-        """
-        self.chebConv5 = ChebConv(u, u, Ks)
-        self.bn5 = BatchNorm(u)
-        self.dropout5 = nn.Dropout(dropout)
-        """
         
-        self.flatten = nn.Flatten(start_dim=1)
-        
-        self.node_head  = nn.Linear(u, 1) # Transforms each node's into a single feature node
-        self.graph_head = nn.Linear(u*num_nodes, 1) # Transforms an entire graph of nodes into a single value
+        self.classifier  = nn.Linear(u, 1) # Transforms each node's into a single feature node
 
-    def forward(self, x, edge_index, weights, batch):
+    def forward(self, x, edge_index, weights, batch):        
         # 4 CGCN layers
         # Relu and Dropout are applied after each one of them
         x = self.chebConv1(x, edge_index, weights)
+        x = self.layerNorm1(x)
         x = F.relu(x)
         x = self.dropout1(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
@@ -64,6 +68,7 @@ class CGCN(nn.Module):
         #    raise RuntimeError("NaN/Inf in x → after chebConv2")
         
         x = self.chebConv3(x, edge_index, weights)
+        x = self.layerNorm3(x)
         x = F.relu(x)
         x = self.dropout3(x)
         #if torch.isnan(x).any() or torch.isinf(x).any():
@@ -76,7 +81,7 @@ class CGCN(nn.Module):
         #    raise RuntimeError("NaN/Inf in x → after chebConv4")
         
         """
-        x = self.chebConv5(x, edge_index, weights)
+        x = self.chebConv5(x, self.edge_index_norm, self.weight_norm)
         x = self.bn5(x)
         x = F.relu(x)
         x = self.dropout5(x)
@@ -87,14 +92,14 @@ class CGCN(nn.Module):
         # from [total_nodes, u] → [batch_size, num_nodes, u]
         x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
         
-        # Node-level logits: [B, N]
-        logits_nodes = self.node_head(x).squeeze(-1)
+        # Classification logits per node (Localizing an attack)
+        logits_nodes = self.classifier(x).squeeze(-1)              # [batch_size, num_nodes]
+        if not torch.isfinite(x).all():
+            raise ValueError("Classifier output NaNs/Infs")
         
-        # Graph-level logits: [B]
-        logits_graph = self.graph_head(x.flatten(start_dim=1)).squeeze(-1)
-
-        # Avoid NaN, inf
-        #x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
+        # Classification logits per graph (Identifying an attack)
+        logits_graph = logits_nodes.max(dim=1).values # choose max one
+        
 
         return logits_nodes, logits_graph
        

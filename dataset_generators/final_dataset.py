@@ -34,6 +34,10 @@ Logic for non-sequential attacks:
 """
 
 TODOs:
+    - Stats without standardization:
+    - Stats with standardization:
+    - Stats with cyclic lr:
+    
     - Try not to standardize(copy the unstandardized data aside, train on the standardized one and then on the regular)
     - I think generators are skipped to be attacked but are still marked as attacked in the generated targets
         Check on Ao
@@ -72,6 +76,7 @@ dataset_config = {
     "max_timesteps": 44634,
     "number_nodes": 300,
     "net_template": pn.case300(),
+    "standardize_data": False,
     }
 
 dataset_config["G"] = pptop.create_nxgraph(dataset_config["net_template"], respect_switches=False, include_impedances=False)
@@ -398,7 +403,7 @@ def worker_Ao(t_save, t_load):
     return t_save  # for tracking progress
 
 
-def generate_Ao(start_id, finish_id, max_workers=12):
+def generate_Ao(start_id, finish_id, max_workers=2):
     """
     # Un-paralleled generation for debugging
     for t_save in range(start_id, finish_id):
@@ -630,44 +635,44 @@ if __name__ == '__main__':
       generate_honest(t)
     
   
-    """
-    # ! ---- Standardization ---- !
-    # Load in the training dataset
-    root = "../final_dataset"
-    Z_list = []
+    if( dataset_config["standardize_data"] ):
+        # ! ---- Standardization ---- !
+        # Load in the training dataset
+        root = "../final_dataset"
+        Z_list = []
+        
+        for i in range(1, 23041):
+            file_path = os.path.join(root, f"Z_{i}.npy")
+            if os.path.exists(file_path):  # check if file exists
+                Z_list.append(file_path)
+            else:
+                raise RuntimeError(f"Z_{i}.npy doesn't exist ->  dataset is corrupted")
     
-    for i in range(1, 23041):
-        file_path = os.path.join(root, f"Z_{i}.npy")
-        if os.path.exists(file_path):  # check if file exists
-            Z_list.append(file_path)
-        else:
-            raise RuntimeError(f"Z_{i}.npy doesn't exist ->  dataset is corrupted")
-
-    # Compute mean & std
-    sum_   = 0.0
-    sumsq  = 0.0
-    count  = 0
-
-    for fn in Z_list:
-        arr = np.load(fn)
-        sum_  += arr.sum()
-        sumsq += (arr**2).sum()
-        count += arr.size
-
-    mean = sum_ / count
-    var  = sumsq / count - mean**2
-    std  = np.sqrt(var)
-
-    print(f"Training dataset, mean = {mean:.5f},  std = {std:.5f}")
+        # Compute mean & std
+        sum_   = 0.0
+        sumsq  = 0.0
+        count  = 0
     
-    # Load in all files:
-    pattern = os.path.join(root, "Z_*.npy")
-    files = glob.glob(pattern)
-
-    # Standardize each file
-    for fn in files:
-        arr = np.load(fn)
-        arr = (arr - mean) / std
-        base = os.path.basename(fn)
-        np.save(os.path.join(root, base), arr)
-    """
+        for fn in Z_list:
+            arr = np.load(fn)
+            sum_  += arr.sum()
+            sumsq += (arr**2).sum()
+            count += arr.size
+    
+        mean = sum_ / count
+        var  = sumsq / count - mean**2
+        std  = np.sqrt(var)
+    
+        print(f"Training dataset, mean = {mean:.5f},  std = {std:.5f}")
+        
+        # Load in all files:
+        pattern = os.path.join(root, "Z_*.npy")
+        files = glob.glob(pattern)
+    
+        # Standardize each file
+        for fn in files:
+            arr = np.load(fn)
+            arr = (arr - mean) / std
+            base = os.path.basename(fn)
+            np.save(os.path.join(root, base), arr)
+    
