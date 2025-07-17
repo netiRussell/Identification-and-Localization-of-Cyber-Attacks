@@ -71,6 +71,7 @@ device = selectDevice()
 # - Define the model -
 model = CGCN(
     in_channels=in_feats,
+    num_CGCN_layers = 4,
     u=config["u"],
     Ks=config["Ks"],
     dropout=config["dropout"],

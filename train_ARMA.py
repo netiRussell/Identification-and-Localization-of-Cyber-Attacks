@@ -74,7 +74,8 @@ device = selectDevice()
 
 # Define the model
 model = GNNArma(
-    in_channels=config["in_channels"], 
+    in_channels=config["in_channels"],
+    num_ARMA_layers = 3,
     hidden_channels=config["hidden_channels"],
     num_stacks=config["num_stacks"],
     num_layers=config["num_layers"], 

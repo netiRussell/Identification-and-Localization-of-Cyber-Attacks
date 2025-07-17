@@ -35,26 +35,27 @@ class GNNArma(nn.Module):
             self.ARMAconvs.append( ARMAConv(in_channels, out_channels,
                                   num_stacks=num_stacks, num_layers=num_layers) )
         
-        # Classifier
-        self.classifier = nn.Linear(1, 1)
-        
         # Layer Normalizations
         self.layerNorms = nn.ModuleList()
-        for index in range(num_ARMA_layers % 2):
-            self.layerNorms.append( nn.LayerNorm(out_channels) )
+        for index in range(num_ARMA_layers // 2):
+            self.layerNorms.append( nn.LayerNorm(hidden_channels) )
         
         # Dropouts
         self.dropouts = nn.ModuleList()
         for index in range(num_ARMA_layers):
             self.dropouts.append( nn.Dropout(dropout) )
+            
+        # Classifier
+        self.classifier = nn.Linear(1, 1)
         
 
     def forward(self, x, edge_index, weights, batch):
+        # Dynamically go over each ArmaConv with layerNorm added after every 2nd ArmaConv
         for idx, ARMALayer in enumerate(self.ARMAconvs):
             x = ARMALayer(x, edge_index, weights)
             
-            if idx+1 % 2 == 0:
-                x = self.layerNorms[int(idx/2)](x) # every 2nd iteration has this layer
+            if (idx+1) % 2 == 0:
+                x = self.layerNorms[idx//2](x) # every 2nd iteration has this layer
             
             x = F.relu(x)
             x = self.dropouts[idx](x)

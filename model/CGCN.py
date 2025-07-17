@@ -28,66 +28,40 @@ class CGCN(nn.Module):
         self.num_nodes = num_nodes
      
         
-        # Chebuchev Conv layers
-        self.chebConv1 = ChebConv(in_channels, u, Ks)
-        self.chebConv2 = ChebConv(u, u, Ks)
-        self.chebConv3 = ChebConv(u, u, Ks)
-        self.chebConv4 = ChebConv(u, u, Ks)
-        # self.chebConv5 = ChebConv(u, u, Ks)
+        # Chebuchev Conv layers (Dynamic definition)
+        self.chebConvs = nn.ModuleList()
+        for index in range(num_CGCN_layers):
+            in_channels = in_channels if index == 0 else u
+            
+            self.chebConvs.append( ChebConv(in_channels, u, Ks) )
     
         
         # Layer Normalizations
-        self.layerNorm1 = nn.LayerNorm(u)
-        self.layerNorm3 = nn.LayerNorm(u)
-        
+        self.layerNorms = nn.ModuleList()
+        for index in range(num_CGCN_layers // 2):
+            self.layerNorms.append( nn.LayerNorm(u) )
         
         # Dropouts
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        self.dropout3 = nn.Dropout(dropout)
-        self.dropout4 = nn.Dropout(dropout)
-        #self.dropout5 = nn.Dropout(dropout)
+        self.dropouts = nn.ModuleList()
+        for index in range(num_CGCN_layers):
+            self.dropouts.append( nn.Dropout(dropout) )
         
         
         self.classifier  = nn.Linear(u, 1) # Transforms each node's into a single feature node
 
-    def forward(self, x, edge_index, weights, batch):        
-        # 4 CGCN layers
-        # Relu and Dropout are applied after each one of them
-        x = self.chebConv1(x, edge_index, weights)
-        x = self.layerNorm1(x)
-        x = F.relu(x)
-        x = self.dropout1(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv1")
-        
-        x = self.chebConv2(x, edge_index, weights)
-        x = F.relu(x)
-        x = self.dropout2(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv2")
-        
-        x = self.chebConv3(x, edge_index, weights)
-        x = self.layerNorm3(x)
-        x = F.relu(x)
-        x = self.dropout3(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv3")
-        
-        x = self.chebConv4(x, edge_index, weights)
-        x = F.relu(x)
-        x = self.dropout4(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv4")
-        
-        """
-        x = self.chebConv5(x, self.edge_index_norm, self.weight_norm)
-        x = self.bn5(x)
-        x = F.relu(x)
-        x = self.dropout5(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv4")
-        """
+    def forward(self, x, edge_index, weights, batch): 
+        # Dynamically go over each ChebConv with layerNorm added after every 2nd chebConv
+        for idx, chebConv in enumerate(self.chebConvs):
+            x = chebConv(x, edge_index, weights)
+            
+            if (idx+1) % 2 == 0:
+                x = self.layerNorms[idx//2](x) # every 2nd iteration has this layer
+            
+            x = F.relu(x)
+            x = self.dropouts[idx](x)
+            
+            if not torch.isfinite(x).all():
+                raise ValueError(f"Layer#{idx} output NaNs/Infs")
         
         # from [total_nodes, u] → [batch_size, num_nodes, u]
         x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)

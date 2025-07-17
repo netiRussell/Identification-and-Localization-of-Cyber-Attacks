@@ -22,7 +22,7 @@ class GNNArma(nn.Module):
         
         # Layer Normalizations
         self.layerNorms = nn.ModuleList()
-        for index in range(num_ARMA_layers % 2):
+        for index in range(num_ARMA_layers // 2):
             self.layerNorms.append( nn.LayerNorm(out_channels) )
         
         # Dropouts
@@ -34,11 +34,12 @@ class GNNArma(nn.Module):
         self.leakyRelu = nn.LeakyReLU(leakyRelu_rate)
 
     def forward(self, x, edge_index, weights):
+        # Dynamically go over each ArmaConv with layerNorm added after every 2nd ArmaConv
         for idx, ARMALayer in enumerate(self.ARMAconvs):
             x = ARMALayer(x, edge_index, weights)
             
-            if idx+1 % 2 == 0:
-                x = self.layerNorms[int(idx/2)](x) # every 2nd iteration has this layer
+            if (idx+1) % 2 == 0:
+                x = self.layerNorms[idx//2](x) # every 2nd iteration has this layer
             
             x = self.leakyRelu(x)
             x = self.dropouts[idx](x)
