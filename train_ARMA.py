@@ -51,13 +51,13 @@ config = {
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3,
-              "weight_decay": 1e-2,
+              "weight_decay": 0,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "in_channels": 2,
               "hidden_channels": 32,
-              "num_stacks": 4,  # K
-              "num_layers": 6,
+              "num_stacks": 3,  # K
+              "num_layers": 5,
               "dropout": 0.4, 
               "num_nodes": 300,
           }
@@ -85,7 +85,7 @@ model = GNNArma(
 model = model.to(device)
 
 # - Define the criterion, optimizer, and scheduler -
-criterion = nn.BCEWithLogitsLoss()
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(4.5).to(device))
 
 optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
 
@@ -98,6 +98,7 @@ def lr_lambda(current_step: int):
 scheduler1 = LambdaLR(optimizer, lr_lambda)
 scheduler2 = CosineAnnealingLR(optimizer, T_max=90*config["num_epochs"])
 scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[config["n_lrWarmup_steps"]])
+
 
 #scheduler = CosineAnnealingLR(optimizer, T_max=90*6) # every 6 epochs (90 batches=steps per epoch)
 """
@@ -347,7 +348,9 @@ for epoch in range(1, config["num_epochs"] + 1):
     
     best_loc = max(loc_accuracies_arr)
     best_det = max(det_accuracies_arr)
+    best_f1 = max(f1_arr)
     print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, Best detection={best_det*100:.2f} at epoch#{det_accuracies_arr.index(best_det)}")
+    print(f"Best f1: {best_f1:.3f} at epoch#{f1_arr.index(best_f1)}")
     print("----------------------------------------------------\n\n")
 
     # Save checkpoint every 5 epochs

@@ -51,7 +51,7 @@ config = {
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-4, 
-              "weight_decay": 1e-2,
+              "weight_decay": 0,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "num_nodes": 300,
@@ -80,7 +80,7 @@ model = CGCN(
 model = model.to(device)
 
 # - Define the criterion, optimizer, and scheduler -
-criterion = nn.BCEWithLogitsLoss()
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(4.5).to(device))
 
 optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
 

@@ -10,8 +10,8 @@ from model.ARMA import GNNArma
 
 from torch.amp import autocast, GradScaler
 import numpy as np
-from sklearn.metrics import precision_score, recall_score, f1_score
 from torch.nn.utils import clip_grad_norm_
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 
 import optuna
 from optuna.trial import TrialState
@@ -31,7 +31,7 @@ config = {
               "num_epochs": 80,
               "batch_size": 4, # 256 with gradient accumulation
               "lr": 1e-3, 
-              "weight_decay": 1e-2,
+              "weight_decay": 0,
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
               "in_channels": 2,
@@ -48,10 +48,6 @@ train_loader, valid_loader, _, in_feats = preparePyGDataset(config, FDIADataset)
 # - Select device -
 device = selectDevice()
 
-# - Define the criterion --
-#criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
-criterion = nn.BCEWithLogitsLoss()
-
 # - Scaler and Autocast -
 # (seems to have negative impact on the training; hence, turned off)
 #use_cuda = (device.type == 'cuda')
@@ -60,9 +56,13 @@ use_cuda = False
 scaler = GradScaler(enabled=False)
 
 
+def lr_lambda(current_step: int):
+    if current_step < config["n_lrWarmup_steps"]:
+        return float(current_step) / config["n_lrWarmup_steps"]
+    return 1.0  # keep base_lr after warm-up
 
 # -- Custom train and validation --
-def train_epoch(model, optimizer, epoch, train_loader):
+def train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler):
     # TO BE DELETED
     gradSpike = False
     
@@ -101,14 +101,15 @@ def train_epoch(model, optimizer, epoch, train_loader):
         # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
         if (minibatch_id+1) % accum_steps == 0:
             # Clip gradients so their total L2 norm ≤ 1
-            total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
-            if(total_norm > 1):
+            total_norm = clip_grad_norm_(model.parameters(), max_norm=10.0)
+            if(total_norm > 10):
                 gradSpike = True
             print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
             
             # Applying grads
             print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}\n")
             scaler.step(optimizer)
+            scheduler.step()
             scaler.update()
             optimizer.zero_grad() 
     
@@ -125,7 +126,7 @@ def train_epoch(model, optimizer, epoch, train_loader):
     return total_loss / len(train_loader)
 
 
-def validate(model, valid_loader):
+def validate(model, valid_loader, criterion):
     # Turn on the evaluation mode to exclude features like dropout regularizatiion
     model.eval()
     
@@ -232,7 +233,6 @@ def validate(model, valid_loader):
                 if(temp_prec == 0 or temp_recall == 0):
                     temp_F1 = 0
                 else:
-                    print(temp_prec, temp_recall)
                     temp_F1 = 2*((temp_prec*temp_recall)/(temp_prec+temp_recall))
                 
                 # Compute a strict match
@@ -282,10 +282,13 @@ def objective(trial):
     
     # Generate number of layers (T)
     num_layers = trial.suggest_categorical("num_layers", [4, 5, 6, 7])
+    
+    # Generate the lr
+    lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
     """
     
     # Generate dropout
-    dropout = trial.suggest_float("dropout", 0.1, 0.5)
+    dropout = 0.4
     
     # Generate hidden features
     hidden_channels = 32
@@ -300,22 +303,33 @@ def objective(trial):
     model = define_model(trial, dropout, hidden_channels, num_stacks, num_layers).to(device)
     
     # Generate the lr
-    lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+    lr = 1e-3
+    
+    # - Define the criterion --
+    pos_weight = trial.suggest_float("pos_weight", 1, 20)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight).to(device))
 
-    # Generate the optimizer.
+    # Define the optimizer.
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=config["weight_decay"])
+    
+    # Define scheduler
+    scheduler1 = LambdaLR(optimizer, lr_lambda)
+    scheduler2 = CosineAnnealingLR(optimizer, T_max=90*config["num_epochs"])
+    scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[config["n_lrWarmup_steps"]])
 
     # Training&Validating of the model.
     for epoch in range(config["num_epochs"]):
         
-        train_loss = train_epoch(model, optimizer, epoch, train_loader)
-        prec, rec, f1, loc_acc, det_acc, FA, avg_loss = validate(model, valid_loader)
+        train_loss = train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler)
+        prec, rec, f1, loc_acc, det_acc, FA, avg_loss = validate(model, valid_loader, criterion)
         
+        print(f"Current trial: {trial.number}")
         print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f}")
         print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
         print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
         print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
         print("\n🔧 Trial Hyperparameters:")
+        print(f"  • Pos. weight:                {pos_weight:.3f}")
         print(f"  • Dropout:                {dropout:.3f}")
         print(f"  • Hidden channels:        {hidden_channels}")
         print(f"  • Num stacks (K):         {num_stacks}")
@@ -352,7 +366,7 @@ sampler = TPESampler(seed=123)
 
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-study_name = "studyARMA_accuracy"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
+study_name = "studyARMA_posweight5"+datetime.now().strftime("%m_%d_%y")  # Unique identifier of the study.
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 

@@ -21,7 +21,7 @@ class CGCN(nn.Module):
       
       Batch normalization layers help
     """
-    def __init__(self, in_channels, u, Ks, dropout=0.1, num_nodes=300 ):
+    def __init__(self, in_channels, num_CGCN_layers, u, Ks, dropout=0.1, num_nodes=300 ):
         super(CGCN, self).__init__()
         
         # Local parameter
