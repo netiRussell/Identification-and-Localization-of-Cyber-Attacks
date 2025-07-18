@@ -7,7 +7,7 @@ class GNNArma(nn.Module):
     """
     GNN encoder using ARMA filters.
     """
-    def __init__(self, in_channels, num_ARMA_layers, hidden_channels, out_channels, 
+    def __init__(self, in_channels, num_ARMA_layers, hidden_channels, d_model_channels, 
                  num_stacks=3, num_layers=2, dropout=0.3, leakyRelu_rate=0.1):
         super(GNNArma, self).__init__()
         
@@ -15,15 +15,16 @@ class GNNArma(nn.Module):
         self.ARMAconvs = nn.ModuleList()
         for index in range(num_ARMA_layers):
             in_channels = in_channels if index == 0 else hidden_channels
-            out_channels = out_channels if index == num_ARMA_layers-1 else hidden_channels
-            
+            out_channels = d_model_channels if index == num_ARMA_layers-1 else hidden_channels
+            print(in_channels, out_channels)
             self.ARMAconvs.append( ARMAConv(in_channels, out_channels,
                                   num_stacks=num_stacks, num_layers=num_layers) )
         
         # Layer Normalizations
         self.layerNorms = nn.ModuleList()
         for index in range(num_ARMA_layers // 2):
-            self.layerNorms.append( nn.LayerNorm(out_channels) )
+            u = d_model_channels if (index+1)*2 == num_ARMA_layers else hidden_channels
+            self.layerNorms.append( nn.LayerNorm(u) )
         
         # Dropouts
         self.dropouts = nn.ModuleList()
@@ -37,7 +38,6 @@ class GNNArma(nn.Module):
         # Dynamically go over each ArmaConv with layerNorm added after every 2nd ArmaConv
         for idx, ARMALayer in enumerate(self.ARMAconvs):
             x = ARMALayer(x, edge_index, weights)
-            
             if (idx+1) % 2 == 0:
                 x = self.layerNorms[idx//2](x) # every 2nd iteration has this layer
             

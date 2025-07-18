@@ -22,7 +22,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "Transformer2025_07_12"
+    "checkpoint_name": "ARMA2025_07_17"
     }
 
 
@@ -39,9 +39,10 @@ _, _, test_loader, in_feats = preparePyGDataset(config, FDIADataset)
 
 # -- Instantiate model --
 # Define the model
-"""
+
 model = GNNArma(
     in_channels=config["in_channels"], 
+    num_ARMA_layers = 3,
     hidden_channels=config["hidden_channels"],
     num_stacks=config["num_stacks"],
     num_layers=config["num_layers"], 
@@ -61,6 +62,7 @@ model = GNNArmaTransformer(
     num_nodes=config["num_nodes"],
     leakyRelu_rate=config["leakyRelu_rate"]
 )
+"""
 
 model = model.to(device)
 model.load_state_dict(checkpoint['model_state_dict'])

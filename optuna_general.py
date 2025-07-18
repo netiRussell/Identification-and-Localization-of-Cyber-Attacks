@@ -5,11 +5,6 @@ from torch_geometric.loader import DataLoader
 import random
 import logging
 
-
-from model.ARMA import GNNArma
-from model.ARMA_Transformer import GNNArmaTransformer
-from model.CGCN import CGCN
-
 from torch.amp import autocast, GradScaler
 import numpy as np
 from torch.nn.utils import clip_grad_norm_
@@ -22,6 +17,7 @@ from datetime import datetime
 
 from dataset import FDIADataset
 from dataset_generators.functions import preparePyGDataset, selectDevice
+from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer
 
 # TODO: delete at the final stage
 import sys
@@ -47,6 +43,7 @@ config = {
                   "lr": 1e-4, 
                   "weight_decay": 0,
                   
+                  "num_CGCN_layers": 4,
                   "u": 32, # hidden channels
                   "Ks": 5,
                   "dropout": 0.5,
@@ -56,6 +53,7 @@ config = {
                   "lr": 1e-3, 
                   "weight_decay": 0,
                   
+                  "num_ARMA_layers": 3,
                   "hidden_channels": 32,
                   "num_stacks": 4,  # K
                   "num_layers": 8,
@@ -66,6 +64,7 @@ config = {
                   "lr": 1e-3, 
                   "weight_decay": 1e-2,
                   
+                  "num_ARMA_layers": 3,
                   "hidden_channels": 32, # channels for ARMA
                   "num_stacks": 3,  # K
                   "num_layers": 5,
@@ -96,55 +95,6 @@ def lr_lambda(current_step: int):
     if current_step < config["n_lrWarmup_steps"]:
         return float(current_step) / config["n_lrWarmup_steps"]
     return 1.0  # keep base_lr after warm-up
-
-
-# -- Definitions of the models --
-def define_modelCGCN(trial, hyperparams):
-    # Required hyperparams content: num_CGCN_layers, dropout, u, Ks
-    model = CGCN(
-        in_channels=config["in_channels"],
-        num_CGCN_layers=hyperparams["num_CGCN_layers"],
-        u=hyperparams["u"],
-        Ks=hyperparams["Ks"],
-        dropout=hyperparams["dropout"],
-        num_nodes = config["num_nodes"],
-    )
-    
-    return model
-
-def define_modelARMA(trial, hyperparams):
-    # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, num_stacks, num_layers
-    model = GNNArma(
-        in_channels=config["in_channels"], 
-        num_ARMA_layers=hyperparams["num_ARMA_layers"],
-        hidden_channels=hyperparams["hidden_channels"],
-        num_stacks=hyperparams["num_stacks"],
-        num_layers=hyperparams["num_layers"], 
-        dropout=hyperparams["dropout"],
-        num_nodes=config["num_nodes"]
-    )
-    
-    return model
-
-def define_modelTransformer(trial, hyperparams):
-    # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, d_model_channels, 
-    #                               num_stacks, num_layers, transformer_layers
-    model = GNNArmaTransformer(
-        in_channels=config["in_channels"],
-        num_ARMA_layers=hyperparams["num_ARMA_layers"],
-        hidden_channels=hyperparams["hidden_channels"],
-        out_channels=hyperparams["d_model_channels"],
-        num_stacks=hyperparams["num_stacks"], 
-        num_layers=hyperparams["num_layers"],
-        transformer_heads=config["transformer_specific"]["transformer_heads"],
-        transformer_layers=hyperparams["transformer_layers"],
-        dropout=hyperparams["dropout"],
-        num_nodes=config["num_nodes"],
-        leakyRelu_rate=config["transformer_specific"]["leakyRelu_rate"]
-    )
-    
-    return model
-
 
 
 # -- Custom train and validation --
@@ -384,7 +334,15 @@ def objective(trial):
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(hyperparams["pos_weight"]).to(device))
     
     # Generate the model
-    model = define_modelARMA(trial, hyperparams).to(device)
+    model = None
+    if( config["model_selected"] == 0 ):
+        model = define_modelCGCN(None, config).to(device)
+    elif( config["model_selected"] == 1 ):
+        model = define_modelARMA(None, config).to(device)
+    elif( config["model_selected"] == 2 ):
+        model = define_modelTransformer(None, config).to(device)
+    else:
+        raise IndexError("Incorrect model ID selected")
 
     # Define the optimizer.
     optimizer = optim.AdamW(model.parameters(), lr=hyperparams["lr"], weight_decay=weight_decay)

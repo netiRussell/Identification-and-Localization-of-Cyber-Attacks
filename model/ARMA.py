@@ -38,7 +38,8 @@ class GNNArma(nn.Module):
         # Layer Normalizations
         self.layerNorms = nn.ModuleList()
         for index in range(num_ARMA_layers // 2):
-            self.layerNorms.append( nn.LayerNorm(hidden_channels) )
+            u = 1 if (index+1)*2 == num_ARMA_layers else hidden_channels
+            self.layerNorms.append( nn.LayerNorm(u) )
         
         # Dropouts
         self.dropouts = nn.ModuleList()
