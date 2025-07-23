@@ -26,7 +26,7 @@ import sys
 
 # -- Define the params and hyperparams for tuning --
 config = {
-              "study_name": "test9",
+              "study_name": "ARMAstandardizedData",
               "dataset_root": "./final_dataset",
               "in_channels": 2,
               "num_nodes": 300,

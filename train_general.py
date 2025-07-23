@@ -427,7 +427,6 @@ for epoch in range(1, config["num_epochs"] + 1):
         
         print(f"Checkpoint saved at epoch#{epoch}")
         
-    """
     # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
     if best_loss - avg_loss >= 1e-4:
         best_loss = avg_loss
@@ -437,7 +436,6 @@ for epoch in range(1, config["num_epochs"] + 1):
         if patience_counter >= 16:
             print(f"Early stopping: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
             break
-    """
 
 # Save checkpoint last time
 save_checkpoint({

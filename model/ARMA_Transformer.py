@@ -16,7 +16,6 @@ class GNNArma(nn.Module):
         for index in range(num_ARMA_layers):
             in_channels = in_channels if index == 0 else hidden_channels
             out_channels = d_model_channels if index == num_ARMA_layers-1 else hidden_channels
-            print(in_channels, out_channels)
             self.ARMAconvs.append( ARMAConv(in_channels, out_channels,
                                   num_stacks=num_stacks, num_layers=num_layers) )
         

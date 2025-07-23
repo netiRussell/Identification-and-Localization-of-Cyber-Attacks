@@ -76,7 +76,7 @@ dataset_config = {
     "max_timesteps": 44634,
     "number_nodes": 300,
     "net_template": pn.case300(),
-    "standardize_data": False,
+    "standardize_data": True,
     }
 
 dataset_config["G"] = pptop.create_nxgraph(dataset_config["net_template"], respect_switches=False, include_impedances=False)
@@ -633,7 +633,6 @@ if __name__ == '__main__':
     for t in range(31681, 34561):
       print(f"\nNot-attacked, Current cycle: #{t}")
       generate_honest(t)
-    
   
     if( dataset_config["standardize_data"] ):
         # ! ---- Standardization ---- !
@@ -675,4 +674,3 @@ if __name__ == '__main__':
             arr = (arr - mean) / std
             base = os.path.basename(fn)
             np.save(os.path.join(root, base), arr)
-    
