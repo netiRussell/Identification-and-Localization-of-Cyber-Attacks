@@ -46,13 +46,17 @@ Output: 2848 boolean values where False means no attack on the bus and Trues mea
 # -- Define the params and hyperparams for training --
 config = {
               "dataset_root": "./final_dataset",
+              "num_train_samples": 23040,
+              "accumulated_batch_size": 256,
               "in_channels": 2,
+              
+              
               "num_nodes": 300,
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 2,
+              "model_selected": 1,
                   #0 = CGCN
                   #1 = ARMA
                   #2 = ARMA-Transformer
@@ -60,27 +64,32 @@ config = {
               "cgcn_specific": {
                   "lr": 1e-4, 
                   "weight_decay": 0,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_CGCN_layers": 4,
                   "u": 32, # hidden channels
                   "Ks": 5,
                   "dropout": 0.5,
+                  "pos_weight": 4.5,
                   },
               
               "arma_specific": {
                   "lr": 1e-3, 
-                  "weight_decay": 0,
+                  "weight_decay": 1e-2,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_ARMA_layers": 3,
                   "hidden_channels": 32,
                   "num_stacks": 4,  # K
                   "num_layers": 8,
                   "dropout": 0.4,
+                  "pos_weight": 6,
                   },
               
               "transformer_specific": {
                   "lr": 1e-3, 
                   "weight_decay": 1e-2,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_ARMA_layers": 3,
                   "hidden_channels": 32, # channels for ARMA
@@ -91,6 +100,7 @@ config = {
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
                   "dropout": 0.2, 
+                  "pos_weight": 4.5,
                   }
               
           }
@@ -109,20 +119,34 @@ device = selectDevice()
 model = None
 lr = 1e-3
 weight_decay = 0
+pos_weight = 0
+n_lrWarmup_steps = 0
 if( config["model_selected"] == 0 ):
+    print("CGCN selected for the training")
+    
     model = define_modelCGCN(None, config).to(device)
     lr = config["cgcn_specific"]["lr"]
     weight_decay = config["cgcn_specific"]["weight_decay"]
+    pos_weight = config["cgcn_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["cgcn_specific"]["n_lrWarmup_steps"]
     
 elif( config["model_selected"] == 1 ):
+    print("ARMA selected for the training")
+    
     model = define_modelARMA(None, config).to(device)
     lr = config["arma_specific"]["lr"]
     weight_decay = config["arma_specific"]["weight_decay"]
+    pos_weight = config["arma_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["arma_specific"]["n_lrWarmup_steps"]
     
 elif( config["model_selected"] == 2 ):
+    print("ARMA-Transformer selected for the training")
+    
     model = define_modelTransformer(None, config).to(device)
     lr = config["transformer_specific"]["lr"]
     weight_decay = config["transformer_specific"]["weight_decay"]
+    pos_weight = config["transformer_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["transformer_specific"]["n_lrWarmup_steps"]
     
 else:
     raise IndexError("Incorrect model ID selected")
@@ -131,19 +155,21 @@ else:
 model = model.to(device)
 
 # - Define the criterion, optimizer, and scheduler -
-criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(4.5).to(device))
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight).to(device))
 
 optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
 def lr_lambda(current_step: int):
-    if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / config["n_lrWarmup_steps"]
+    if current_step < n_lrWarmup_steps:
+        return float(current_step) / n_lrWarmup_steps
     return 1.0  # keep base_lr after warm-up
 
 
+
 scheduler1 = LambdaLR(optimizer, lr_lambda)
-scheduler2 = CosineAnnealingLR(optimizer, T_max=90*config["num_epochs"])
-scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[config["n_lrWarmup_steps"]])
+num_batches = config["num_train_samples"] / config["accumulated_batch_size"]
+scheduler2 = CosineAnnealingLR(optimizer, T_max=num_batches*config["num_epochs"]-n_lrWarmup_steps)
+scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[n_lrWarmup_steps])
 
 
 #scheduler = CosineAnnealingLR(optimizer, T_max=90*6) # every 6 epochs (90 batches=steps per epoch)

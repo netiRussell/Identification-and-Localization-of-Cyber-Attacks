@@ -24,11 +24,13 @@ import sys
 
 # hyperparams at every function, configs
 
-# -- Define the params and hyperparams for tuning --
 config = {
-              "study_name": "ARMAstandardizedData",
               "dataset_root": "./final_dataset",
+              "num_train_samples": 23040,
+              "accumulated_batch_size": 256,
               "in_channels": 2,
+              
+              
               "num_nodes": 300,
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
@@ -42,37 +44,43 @@ config = {
               "cgcn_specific": {
                   "lr": 1e-4, 
                   "weight_decay": 0,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_CGCN_layers": 4,
                   "u": 32, # hidden channels
                   "Ks": 5,
                   "dropout": 0.5,
+                  "pos_weight": 4.5,
                   },
               
               "arma_specific": {
                   "lr": 1e-3, 
                   "weight_decay": 0,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_ARMA_layers": 3,
                   "hidden_channels": 32,
                   "num_stacks": 4,  # K
                   "num_layers": 8,
                   "dropout": 0.4,
+                  "pos_weight": 6,
                   },
               
               "transformer_specific": {
                   "lr": 1e-3, 
                   "weight_decay": 1e-2,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_ARMA_layers": 3,
                   "hidden_channels": 32, # channels for ARMA
                   "num_stacks": 3,  # K
                   "num_layers": 5,
-                  "out_channels": 256, # channels of a transformer-encoder
+                  "d_model_channels": 256, # channels of a transformer-encoder
                   "transformer_heads": 4,
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
                   "dropout": 0.2, 
+                  "pos_weight": 4.5,
                   }
               
           }
@@ -90,10 +98,26 @@ device = selectDevice()
 use_cuda = False
 scaler = GradScaler(enabled=False)
 
+n_lrWarmup_steps = 0
+if( config["model_selected"] == 0 ):
+    print("CGCN selected for the training")
+    n_lrWarmup_steps = config["cgcn_specific"]["n_lrWarmup_steps"]
+    
+elif( config["model_selected"] == 1 ):
+    print("ARMA selected for the training")
+    n_lrWarmup_steps = config["arma_specific"]["n_lrWarmup_steps"]
+    
+elif( config["model_selected"] == 2 ):
+    print("ARMA-Transformer selected for the training")
+    n_lrWarmup_steps = config["transformer_specific"]["n_lrWarmup_steps"]
+    
+else:
+    raise IndexError("Incorrect model ID selected")
+
 # Warm-up function
 def lr_lambda(current_step: int):
-    if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / config["n_lrWarmup_steps"]
+    if current_step < n_lrWarmup_steps:
+        return float(current_step) / n_lrWarmup_steps
     return 1.0  # keep base_lr after warm-up
 
 
@@ -314,21 +338,9 @@ def objective(trial):
     # Generate dropout
     hyperparams["dropout"] = trial.suggest_float("dropout", 0.1, 0.5)
     
-    # Generate hidden features
-    hyperparams["hidden_channels"] = trial.suggest_categorical("hidden_channels", [32, 64, 128])
-    
-    # Generate number of stacks
-    hyperparams["num_stacks"] = trial.suggest_categorical("num_stacks", [3, 4, 5])
-    
-    # Generate number of layers
-    hyperparams["num_layers"] = trial.suggest_categorical("num_layers", [4, 5, 6, 7])
-    
-    # Generate number of ARMA layers
-    hyperparams["num_ARMA_layers"] = trial.suggest_categorical("num_ARMA_layers", [2, 3, 4])
-    
     # Generate the lr
     hyperparams["lr"] = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
-    
+
     # - Define the criterion --
     hyperparams["pos_weight"] = trial.suggest_float("pos_weight", 1, 9)
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(hyperparams["pos_weight"]).to(device))
@@ -336,10 +348,40 @@ def objective(trial):
     # Generate the model
     model = None
     if( config["model_selected"] == 0 ):
+        print("CGCN has been selected")
+        
+        # Generate hidden features
+        hyperparams["num_CGCN_layers"] = trial.suggest_categorical("num_CGCN_layers", [2, 3, 4, 5])
+        
+        # Generate number of stacks
+        hyperparams["u"] = trial.suggest_categorical("u", [8, 16, 32, 64])
+        
+        # Generate number of layers
+        hyperparams["Ks"] = trial.suggest_categorical("Ks", [3, 5, 7])
+        
+        # Model
         model = define_modelCGCN(None, config).to(device)
     elif( config["model_selected"] == 1 ):
+        print("ARMA has been selected")
+        
+        # Generate hidden features
+        hyperparams["hidden_channels"] = trial.suggest_categorical("hidden_channels", [32, 64, 128])
+        
+        # Generate number of stacks
+        hyperparams["num_stacks"] = trial.suggest_categorical("num_stacks", [3, 4, 5])
+        
+        # Generate number of layers
+        hyperparams["num_layers"] = trial.suggest_categorical("num_layers", [4, 5, 6, 7])
+        
+        # Generate number of ARMA layers
+        hyperparams["num_ARMA_layers"] = trial.suggest_categorical("num_ARMA_layers", [2, 3, 4])
+        
+        # Model
         model = define_modelARMA(None, config).to(device)
     elif( config["model_selected"] == 2 ):
+        print("Transformer has been selected")
+        
+        # Model
         model = define_modelTransformer(None, config).to(device)
     else:
         raise IndexError("Incorrect model ID selected")
@@ -349,8 +391,9 @@ def objective(trial):
     
     # Define scheduler
     scheduler1 = LambdaLR(optimizer, lr_lambda)
-    scheduler2 = CosineAnnealingLR(optimizer, T_max=90*config["num_epochs"])
-    scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[config["n_lrWarmup_steps"]])
+    num_batches = config["num_train_samples"] / config["accumulated_batch_size"]
+    scheduler2 = CosineAnnealingLR(optimizer, T_max=num_batches*config["num_epochs"]-n_lrWarmup_steps)
+    scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[n_lrWarmup_steps])
     
     # Useful data holders
     loc_accuracies_arr = []
@@ -381,7 +424,7 @@ def objective(trial):
         
         print("\n🔧 Trial Hyperparameters:")
         for key, value in hyperparams.items():
-            print(f"\t• {key}: {value:.3f}")
+            print(f"\t• {key}: {value:.6f}")
         print("----------------------------------------------------\n\n")
 
         trial.report(f1, epoch)
