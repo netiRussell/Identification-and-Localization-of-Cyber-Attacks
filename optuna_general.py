@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 
 import optuna
 from optuna.trial import TrialState
-from optuna.samplers import TPESampler
+from optuna.samplers import TPESampler, CmaEsSampler
 from datetime import datetime
 
 from dataset import FDIADataset
@@ -25,7 +25,7 @@ import sys
 # hyperparams at every function, configs
 
 config = {
-              "dataset_root": "./final_dataset",
+              "dataset_root": "./final_dataset_No_standardization",
               "num_train_samples": 23040,
               "accumulated_batch_size": 256,
               "in_channels": 2,
@@ -100,16 +100,16 @@ scaler = GradScaler(enabled=False)
 
 n_lrWarmup_steps = 0
 if( config["model_selected"] == 0 ):
-    print("CGCN selected for the training")
     n_lrWarmup_steps = config["cgcn_specific"]["n_lrWarmup_steps"]
+    config["study_name"] = "CGCN"
     
 elif( config["model_selected"] == 1 ):
-    print("ARMA selected for the training")
     n_lrWarmup_steps = config["arma_specific"]["n_lrWarmup_steps"]
+    config["study_name"] = "ARMA"
     
 elif( config["model_selected"] == 2 ):
-    print("ARMA-Transformer selected for the training")
     n_lrWarmup_steps = config["transformer_specific"]["n_lrWarmup_steps"]
+    config["study_name"] = "ARMA-Transformer"
     
 else:
     raise IndexError("Incorrect model ID selected")
@@ -164,10 +164,10 @@ def train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler):
             total_norm = clip_grad_norm_(model.parameters(), max_norm=10.0)
             if(total_norm > 10):
                 gradSpike = True
-            print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
+            #print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
             
             # Applying grads
-            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}\n")
+            #print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}\n")
             scaler.step(optimizer)
             scheduler.step()
             scaler.update()
@@ -175,10 +175,10 @@ def train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler):
     
     # Clip gradients so their total L2 norm ≤ 1
     total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
-    print(f"Grad norm before clipping: {total_norm:.4f}")
+    #print(f"Grad norm before clipping: {total_norm:.4f}")
     
     # Extra gradient step to make sure there are no leftovers
-    print(f"Epoch#{epoch}, Last batch\n")
+    #print(f"Epoch#{epoch}, Last batch\n")
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad()
@@ -304,8 +304,8 @@ def validate(model, valid_loader, criterion):
                  F1 += 1
             
             # TO BE DELETED:
-            print(f"Attack: {target_graph}/{graph_pred}, Current F1: {temp_F1:.2f}, Num of buses with f1 > 95%: {F1}")
-            print(f"Number of ones exptected: {target_nodes.sum()}, predicted: {pred_nodes.sum()}\n")
+            #print(f"Attack: {target_graph}/{graph_pred}, Current F1: {temp_F1:.2f}, Num of buses with f1 > 95%: {F1}")
+            #print(f"Number of ones exptected: {target_nodes.sum()}, predicted: {pred_nodes.sum()}\n")
                 
         
         # Number of elements in metrices (is used to get mean)
@@ -451,8 +451,6 @@ def objective(trial):
 # ---- Hyperparameter tuning ---- #
 # # # # # # # # # # # # # # # # # #
 
-sampler = TPESampler(seed=123)
-
 # Model-specific values:
 study_name = config["study_name"]+"_"+datetime.now().strftime("%m_%d_%y")
 if( config["model_selected"] == 0 ):
@@ -464,18 +462,30 @@ elif( config["model_selected"] == 2 ):
 else:
     raise IndexError("Incorrect model ID selected")
 
-
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
+
+# Study definition
 study = optuna.create_study(
                             direction="maximize", 
-                            sampler=sampler,
-                            pruner=optuna.pruners.PatientPruner(wrapped_pruner=None, patience=5, min_delta=0.0),
+                            sampler=CmaEsSampler(),
+                            pruner=optuna.pruners.SuccessiveHalvingPruner(min_resource='auto', reduction_factor=3),
                             study_name=study_name,
                             storage=storage_name
                             )
 
-study.optimize(objective, n_trials=250, timeout=None)
+# Study with aggressive sampling
+study.optimize(objective, n_trials=50, timeout=None)
+
+# Studying with fine sampling
+study.sampler = TPESampler(multivariate=True);
+study.optimize(objective, n_trials=200, timeout=None)
+
+
+
+#  # # # # # # # # # # # # # #
+# ---- Printing results ---- #
+#  # # # # # # # # # # # # # #
 
 pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
 complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
