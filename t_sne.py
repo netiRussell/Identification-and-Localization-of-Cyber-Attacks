@@ -12,22 +12,51 @@ import numpy as np
 import glob
 import matplotlib.pyplot as plt
 from threadpoolctl import threadpool_limits
+from pathlib import Path
+import re
 
 # TODO: to be deleted
 import sys
 
+# Local function to parse ids to be considered for the T-SNE
+def parse_ids(spec: str):
+    out = []
+    for part in spec.replace(' ', '').split(','):
+        if not part: 
+            continue
+        if '-' in part:
+            a, b = part.split('-')
+            out.extend(range(int(a), int(b) + 1))
+        else:
+            out.append(int(part))
+    return sorted(set(out))
 
+# -- Global settings --
+PERPLEXITY = 50
+ID_SPEC = "1-34560"
 
 # -- Define the config --
 config = {
-        "dataset_root": "./final_dataset_NotStandard",
+        "dataset_root": "./final_dataset_No_standardization",
     }
+
+# -- Get all Y and X
+root = Path(config["dataset_root"])
+extract = lambda p, pref: int(re.search(rf"{pref}_(\d+)\.npy$", p.name).group(1))
+
+Z_map = {extract(p, "Z"): p for p in root.glob("Z_*.npy")}
+T_map = {extract(p, "target"): p for p in root.glob("target_*.npy")}
+
+ids = [i for i in parse_ids(ID_SPEC) if i in Z_map and i in T_map]
+all_X = [str(Z_map[i]) for i in ids]
+all_Y = [str(T_map[i]) for i in ids]
+
 
 # -- Prepare the dataset for Y --
 # Define the TSNE
 tsneY = TSNE(
     n_components=2,
-    perplexity=25,
+    perplexity=PERPLEXITY,
     learning_rate=200,
     early_exaggeration=5,
     n_iter=1500,
@@ -65,7 +94,7 @@ plt.legend(handles=[
         mpatches.Patch(color='black', label='No Attack'),
         mpatches.Patch(color='green',      label='Attack')
     ])
-plt.title("Y projection")
+plt.title(f"Y projection (perplexity = {PERPLEXITY})")
 plt.xlabel("t-SNE dim 1")
 plt.ylabel("t-SNE dim 2")
 plt.grid(False)
@@ -76,7 +105,7 @@ plt.show()
 # Define the TSNE
 tsneX = TSNE(
     n_components=2,
-    perplexity=25,
+    perplexity=PERPLEXITY,
     learning_rate=200,
     early_exaggeration=5,
     n_iter=1500,
@@ -113,7 +142,7 @@ plt.legend(handles=[
         mpatches.Patch(color='black', label='No Attack'),
         mpatches.Patch(color='green',      label='Attack')
     ])
-plt.title("X projection")
+plt.title(f"X projection (perplexity = {PERPLEXITY})")
 plt.xlabel("t-SNE dim 1")
 plt.ylabel("t-SNE dim 2")
 plt.grid(False)
