@@ -199,7 +199,8 @@ def validate(model, valid_loader, criterion):
     
     # Declare holders for metrics
     FA = 0
-    F1 = 0 
+    F1 = 0
+    raw_F1 = 0
     temp_F1 = 0
     recall = 0
     precision = 0
@@ -299,7 +300,10 @@ def validate(model, valid_loader, criterion):
                 if( np.array_equal(pred_nodes, target_nodes) ):
                     localization_accuracy += 1
             
-            # Sample percentage having F1 >= 95%
+            # Raw F1
+            raw_F1 += temp_F1
+            
+            # Percentage of samples having F1 >= 95%
             if(temp_F1 >= 0.95):
                  F1 += 1
             
@@ -310,7 +314,7 @@ def validate(model, valid_loader, criterion):
         
         # Number of elements in metrices (is used to get mean)
         n_elem_metrices = len(valid_loader)
-        return precision/n_elem_metrices, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
+        return precision/n_elem_metrices, recall/n_elem_metrices, F1/n_elem_metrices, raw_F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
 
@@ -404,16 +408,18 @@ def objective(trial):
     for epoch in range(config["num_epochs"]):
         
         train_loss = train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler)
-        prec, rec, f1, loc_acc, det_acc, FA, avg_loss = validate(model, valid_loader, criterion)
+        prec, rec, f1, avg_f1, loc_acc, det_acc, FA, avg_loss = validate(model, valid_loader, criterion)
         
         loc_accuracies_arr.append(loc_acc)
         det_accuracies_arr.append(det_acc)
         f1_arr.append(f1)
         
-        print(f"\n\nCurrent trial: {trial.number}")
-        print(f"Epoch {epoch}: Average Train Loss={train_loss:.4f}")
-        print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
-        print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
+        print(f"\n\nCurrent trial: {trial.number}")       
+        print(f"\nEpoch {epoch}: Average Train Loss={train_loss:.4f},")
+        print(f"Precision={prec:.4f}, Recall={rec:.4f},")
+        print(f"Percantage of sample having F1 >= 95% = {f1:.4f},")
+        print(f"Average F1 = {avg_f1:.4f},")
+        print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f},")
         print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
         
         best_loc = max(loc_accuracies_arr)
@@ -459,6 +465,8 @@ elif( config["model_selected"] == 1 ):
     study_name = "studyARMA_" + study_name
 elif( config["model_selected"] == 2 ):
     study_name = "studyARMATrans_" + study_name
+elif( config["model_selected"] == 3 ):
+     study_name = "studyCNN_" + study_name
 else:
     raise IndexError("Incorrect model ID selected")
 
