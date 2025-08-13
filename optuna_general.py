@@ -469,7 +469,7 @@ storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
 study = optuna.create_study(
                             direction="maximize", 
                             sampler=CmaEsSampler(),
-                            pruner=optuna.pruners.SuccessiveHalvingPruner(min_resource='auto', reduction_factor=3),
+                            pruner=optuna.pruners.SuccessiveHalvingPruner(min_resource=1, reduction_factor=2),
                             study_name=study_name,
                             storage=storage_name
                             )

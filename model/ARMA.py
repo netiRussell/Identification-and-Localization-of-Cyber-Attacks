@@ -11,15 +11,7 @@ class GNNArma(nn.Module):
     """
     GNN encoder using ARMA filters.
     """
-    # TODO: add batch norm and resid. Make sure there are no inf or nan by
-    """
-    if torch.isnan(x).any() or torch.isinf(x).any():
-        raise RuntimeError("NaN/Inf in x → after chebConv3")
-        
-        and
-        
-    x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
-    """
+
     def __init__(self, in_channels=2, num_ARMA_layers=3, hidden_channels=32, 
                  num_stacks=3, num_layers=5, dropout=0.5, num_nodes=300):
         super(GNNArma, self).__init__()

@@ -80,10 +80,10 @@ config = {
                   
                   "num_ARMA_layers": 3,
                   "hidden_channels": 32,
-                  "num_stacks": 4,  # K
-                  "num_layers": 8,
+                  "num_stacks": 3,  # K
+                  "num_layers": 5,
                   "dropout": 0.4,
-                  "pos_weight": 6,
+                  "pos_weight": 4.5,
                   },
               
               "transformer_specific": {

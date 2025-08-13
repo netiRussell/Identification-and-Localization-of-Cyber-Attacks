@@ -22,7 +22,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "ARMA2025_07_17"
+    "checkpoint_name": "ARMAElite"
     }
 
 
@@ -42,11 +42,11 @@ _, _, test_loader, in_feats = preparePyGDataset(config, FDIADataset)
 
 model = GNNArma(
     in_channels=config["in_channels"], 
-    num_ARMA_layers = 3,
-    hidden_channels=config["hidden_channels"],
-    num_stacks=config["num_stacks"],
-    num_layers=config["num_layers"], 
-    dropout=config["dropout"],
+    num_ARMA_layers=config["arma_specific"]["num_ARMA_layers"],
+    hidden_channels=config["arma_specific"]["hidden_channels"],
+    num_stacks=config["arma_specific"]["num_stacks"],
+    num_layers=config["arma_specific"]["num_layers"], 
+    dropout=config["arma_specific"]["dropout"],
     num_nodes=config["num_nodes"]
 )
 """

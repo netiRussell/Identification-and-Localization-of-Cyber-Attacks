@@ -33,7 +33,13 @@ def parse_ids(spec: str):
 
 # -- Global settings --
 PERPLEXITY = 50
+TITLE = "All"
 ID_SPEC = "1-34560"
+ID_SPEC_healthy = "11521-23040,25921-28800,31681-34560"
+ID_SPEC_Ao = "1-5760,23041-24480,28801-29520"
+ID_SPEC_Ad = "5761-11520,24481-25920,29521-30240"
+ID_SPEC_As = "30241-30960"
+ID_SPEC_Ar = "30961-31680"
 
 # -- Define the config --
 config = {
@@ -63,8 +69,6 @@ tsneY = TSNE(
     init='pca',
 )
 
-# Get all the Y samples
-all_Y = sorted(glob.glob(config["dataset_root"] + "/target_*.npy"))
 # Prepare the Y holder
 Y = np.zeros((len(all_Y), 301), dtype="float")
 
@@ -94,7 +98,7 @@ plt.legend(handles=[
         mpatches.Patch(color='black', label='No Attack'),
         mpatches.Patch(color='green',      label='Attack')
     ])
-plt.title(f"Y projection (perplexity = {PERPLEXITY})")
+plt.title(f"Y projection ({TITLE})")
 plt.xlabel("t-SNE dim 1")
 plt.ylabel("t-SNE dim 2")
 plt.grid(False)
@@ -112,8 +116,7 @@ tsneX = TSNE(
     init='pca',
 )
 
-# Get all the X samples
-all_X = sorted(glob.glob(config["dataset_root"] + "/Z_*.npy"))
+
 # Prepare the X holder
 X = np.zeros((len(all_X), 300, 2), dtype="float")
 
@@ -142,7 +145,7 @@ plt.legend(handles=[
         mpatches.Patch(color='black', label='No Attack'),
         mpatches.Patch(color='green',      label='Attack')
     ])
-plt.title(f"X projection (perplexity = {PERPLEXITY})")
+plt.title(f"X projection ({TITLE})")
 plt.xlabel("t-SNE dim 1")
 plt.ylabel("t-SNE dim 2")
 plt.grid(False)
