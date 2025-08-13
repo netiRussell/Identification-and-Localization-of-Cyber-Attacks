@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 
 from dataset import FDIADataset
 from dataset_generators.functions import save_checkpoint, preparePyGDataset, selectDevice
-from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer
+from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer, define_modelCNN
 
 # TODO: delete at the final stage
 import sys
@@ -56,10 +56,11 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 1,
+              "model_selected": 3,
                   #0 = CGCN
                   #1 = ARMA
                   #2 = ARMA-Transformer
+                  #3 = CNN
               
               "cgcn_specific": {
                   "lr": 1e-4, 
@@ -101,7 +102,20 @@ config = {
                   "leakyRelu_rate": 0.1,
                   "dropout": 0.2, 
                   "pos_weight": 4.5,
-                  }
+                  },
+              
+              "cnn_specific": {
+                  "lr": 1e-4, 
+                  "weight_decay": 0,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
+                  
+                  "num_CNN_layers": 3,
+                  "Ks": 3,
+                  "units": 64,
+                  "padding": "same",
+                  "dropout": 0.5,
+                  "pos_weight": 4.5,
+                  },
               
           }
 
@@ -147,7 +161,16 @@ elif( config["model_selected"] == 2 ):
     weight_decay = config["transformer_specific"]["weight_decay"]
     pos_weight = config["transformer_specific"]["pos_weight"]
     n_lrWarmup_steps = config["transformer_specific"]["n_lrWarmup_steps"]
+
+elif( config["model_selected"] == 3 ):
+    print("CNN selected for the training")
     
+    model = define_modelCNN(None, config).to(device)
+    lr = config["cnn_specific"]["lr"]
+    weight_decay = config["cnn_specific"]["weight_decay"]
+    pos_weight = config["cnn_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["cnn_specific"]["n_lrWarmup_steps"]
+
 else:
     raise IndexError("Incorrect model ID selected")
     
@@ -404,6 +427,8 @@ elif( config["model_selected"] == 1 ):
     checkpoint_name = "ARMA" 
 elif( config["model_selected"] == 2 ):
     checkpoint_name = "ARMATrans"
+elif( config["model_selected"] == 3 ):
+    checkpoint_name = "CNN"
 else:
     raise IndexError("Incorrect model ID selected")
 

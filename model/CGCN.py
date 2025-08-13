@@ -68,7 +68,7 @@ class CGCN(nn.Module):
         
         # Classification logits per node (Localizing an attack)
         logits_nodes = self.classifier(x).squeeze(-1)              # [batch_size, num_nodes]
-        if not torch.isfinite(x).all():
+        if not torch.isfinite(logits_nodes).all():
             raise ValueError("Classifier output NaNs/Infs")
         
         # Classification logits per graph (Identifying an attack)

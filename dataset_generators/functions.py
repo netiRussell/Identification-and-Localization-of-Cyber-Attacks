@@ -13,6 +13,7 @@ import networkx as nx
 from model.ARMA import GNNArma
 from model.ARMA_Transformer import GNNArmaTransformer
 from model.CGCN import CGCN
+from model.CNN import CNN
 
 # TODO: To be deleted
 import sys
@@ -431,6 +432,31 @@ def define_modelTransformer(hyperparams, config):
             dropout=hyperparams["dropout"],
             num_nodes=config["num_nodes"],
             leakyRelu_rate=config["transformer_specific"]["leakyRelu_rate"]
+        )
+    
+    return model
+
+def define_modelCNN(hyperparams, config):
+    if hyperparams == None:
+        model = CNN(
+            in_channels=config["in_channels"], 
+            num_CNN_layers=config["cnn_specific"]["num_CNN_layers"],
+            Ks=config["cnn_specific"]["Ks"],
+            units=config["cnn_specific"]["units"],
+            padding=config["cnn_specific"]["padding"],
+            dropout=config["cnn_specific"]["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    else:
+        # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, num_stacks, num_layers
+        model = CNN(
+            in_channels=config["in_channels"], 
+            num_CNN_layers=hyperparams["num_CNN_layers"],
+            Ks=hyperparams["Ks"],
+            units=hyperparams["units"],
+            padding=hyperparams["padding"],
+            dropout=hyperparams["dropout"],
+            num_nodes=config["num_nodes"]
         )
     
     return model
