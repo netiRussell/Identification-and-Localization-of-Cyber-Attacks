@@ -4,8 +4,6 @@ import torch.optim as optim
 from torch_geometric.loader import DataLoader
 import random
 
-from model.ARMA import GNNArma
-
 from torch.amp import autocast, GradScaler
 import gc
 import time
@@ -13,14 +11,16 @@ import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 from torch.nn.utils import clip_grad_norm_
 from torch_geometric.utils import to_dense_batch
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 
 
 from dataset import FDIADataset
 from dataset_generators.functions import save_checkpoint, preparePyGDataset, selectDevice
+from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer, define_modelCNN
 
 # TODO: delete at the final stage
 import sys
+import matplotlib.pyplot as plt
 
 
 # -- Clear cache from the previous training --
@@ -46,19 +46,77 @@ Output: 2848 boolean values where False means no attack on the bus and Trues mea
 # -- Define the params and hyperparams for training --
 config = {
               "dataset_root": "./final_dataset",
-    
+              "num_train_samples": 23040,
+              "accumulated_batch_size": 256,
+              "in_channels": 2,
+              
+              
+              "num_nodes": 300,
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
-              "lr": 1e-3,
-              "weight_decay": 1e-2,
-              "n_lrWarmup_steps": 600, # 1 batch = 1 step
+              "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "in_channels": 2,
-              "hidden_channels": 32,
-              "num_stacks": 3,  # K
-              "num_layers": 5,
-              "dropout": 0.2, 
-              "num_nodes": 300,
+              "model_selected": 3,
+                  #0 = CGCN
+                  #1 = ARMA
+                  #2 = ARMA-Transformer
+                  #3 = CNN
+              
+              "cgcn_specific": {
+                  "lr": 1e-4, 
+                  "weight_decay": 0,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
+                  
+                  "num_CGCN_layers": 4,
+                  "u": 32, # hidden channels
+                  "Ks": 5,
+                  "dropout": 0.5,
+                  "pos_weight": 4.5,
+                  },
+              
+              "arma_specific": {
+                  "lr": 1e-3, 
+                  "weight_decay": 1e-2,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
+                  
+                  "num_ARMA_layers": 3,
+                  "hidden_channels": 32,
+                  "num_stacks": 3,  # K
+                  "num_layers": 5,
+                  "dropout": 0.4,
+                  "pos_weight": 4.5,
+                  },
+              
+              "transformer_specific": {
+                  "lr": 1e-3, 
+                  "weight_decay": 1e-2,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
+                  
+                  "num_ARMA_layers": 3,
+                  "hidden_channels": 32, # channels for ARMA
+                  "num_stacks": 3,  # K
+                  "num_layers": 5,
+                  "d_model_channels": 256, # channels of a transformer-encoder
+                  "transformer_heads": 4,
+                  "transformer_layers": 2,
+                  "leakyRelu_rate": 0.1,
+                  "dropout": 0.2, 
+                  "pos_weight": 4.5,
+                  },
+              
+              "cnn_specific": {
+                  "lr": 1e-4, 
+                  "weight_decay": 0,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
+                  
+                  "num_CNN_layers": 3,
+                  "Ks": 3,
+                  "units": 64,
+                  "padding": "same",
+                  "dropout": 0.5,
+                  "pos_weight": 4.5,
+                  },
+              
           }
 
 
@@ -71,31 +129,85 @@ train_loader, valid_loader, _, in_feats = preparePyGDataset(config, FDIADataset)
 # - Select device -
 device = selectDevice()
 
-# Define the model
-model = GNNArma(
-    in_channels=config["in_channels"], 
-    hidden_channels=config["hidden_channels"],
-    num_stacks=config["num_stacks"],
-    num_layers=config["num_layers"], 
-    dropout=config["dropout"],
-    num_nodes=config["num_nodes"]
-)
+# - Define the model and model-specific hyperparameters -
+model = None
+lr = 1e-3
+weight_decay = 0
+pos_weight = 0
+n_lrWarmup_steps = 0
+if( config["model_selected"] == 0 ):
+    print("CGCN selected for the training")
+    
+    model = define_modelCGCN(None, config).to(device)
+    lr = config["cgcn_specific"]["lr"]
+    weight_decay = config["cgcn_specific"]["weight_decay"]
+    pos_weight = config["cgcn_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["cgcn_specific"]["n_lrWarmup_steps"]
+    
+elif( config["model_selected"] == 1 ):
+    print("ARMA selected for the training")
+    
+    model = define_modelARMA(None, config).to(device)
+    lr = config["arma_specific"]["lr"]
+    weight_decay = config["arma_specific"]["weight_decay"]
+    pos_weight = config["arma_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["arma_specific"]["n_lrWarmup_steps"]
+    
+elif( config["model_selected"] == 2 ):
+    print("ARMA-Transformer selected for the training")
+    
+    model = define_modelTransformer(None, config).to(device)
+    lr = config["transformer_specific"]["lr"]
+    weight_decay = config["transformer_specific"]["weight_decay"]
+    pos_weight = config["transformer_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["transformer_specific"]["n_lrWarmup_steps"]
+
+elif( config["model_selected"] == 3 ):
+    print("CNN selected for the training")
+    
+    model = define_modelCNN(None, config).to(device)
+    lr = config["cnn_specific"]["lr"]
+    weight_decay = config["cnn_specific"]["weight_decay"]
+    pos_weight = config["cnn_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["cnn_specific"]["n_lrWarmup_steps"]
+
+else:
+    raise IndexError("Incorrect model ID selected")
+    
 #model = torch.compile(model, backend="aot_eager")
 model = model.to(device)
 
 # - Define the criterion, optimizer, and scheduler -
-#criterion = nn.CrossEntropyLoss() # maps logits [N,2] + labels [N] → scalar
-criterion = nn.BCEWithLogitsLoss()
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight).to(device))
 
-optimizer = optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
 def lr_lambda(current_step: int):
-    if current_step < config["n_lrWarmup_steps"]:
-        return float(current_step) / config["n_lrWarmup_steps"]
+    if current_step < n_lrWarmup_steps:
+        return float(current_step) / n_lrWarmup_steps
     return 1.0  # keep base_lr after warm-up
 
-scheduler = LambdaLR(optimizer, lr_lambda)
 
+
+scheduler1 = LambdaLR(optimizer, lr_lambda)
+num_batches = config["num_train_samples"] / config["accumulated_batch_size"]
+scheduler2 = CosineAnnealingLR(optimizer, T_max=num_batches*config["num_epochs"]-n_lrWarmup_steps)
+scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[n_lrWarmup_steps])
+
+
+#scheduler = CosineAnnealingLR(optimizer, T_max=90*6) # every 6 epochs (90 batches=steps per epoch)
+"""
+lr_arr = []
+for t in range(90*config["num_epochs"]):
+    lr_arr.append(scheduler.get_last_lr())
+    scheduler.step()
+
+flat_lr_arr = [x for sub in lr_arr for x in sub]
+
+plt.plot(range(len(lr_arr)), flat_lr_arr )
+plt.show()
+sys.exit()
+"""
 
 # Scaler and Autocast 
 # (seems to have negative impact on the training; hence, turned off)
@@ -106,11 +218,9 @@ scaler = GradScaler(enabled=False)
 
 
 # -- Training & evaluation functions --
-# TO BE DELETED
-gradSpike = False
 def train_epoch(epoch):
     # TO BE DELETED
-    global gradSpike
+    gradSpike = False
     
     # Turn on the training mode to include features like GraphNorm normalization
     model.train()
@@ -128,7 +238,7 @@ def train_epoch(epoch):
         with autocast(device_type=device.type, enabled=use_cuda):
             # Get targets for the batch
             target_nodes = minibatch.y
-            target_graph = minibatch.y_graph
+            #target_graph = minibatch.y_graph
             
             # Get model's raw output (logits)
             logits_nodes, logits_graph = model(minibatch.x, 
@@ -138,7 +248,7 @@ def train_epoch(epoch):
             
             # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += criterion(logits_graph, target_graph.squeeze(0))
+            #loss += criterion(logits_graph, target_graph.squeeze(0))
             total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
@@ -147,8 +257,8 @@ def train_epoch(epoch):
         # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
         if (minibatch_id+1) % accum_steps == 0:
             # Clip gradients so their total L2 norm ≤ 1
-            total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
-            if(total_norm > 1):
+            total_norm = clip_grad_norm_(model.parameters(), max_norm=10.0)
+            if(total_norm > 10):
                 gradSpike = True
             print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
             
@@ -181,28 +291,19 @@ def validate(valid_loader):
     # Keep track of loss for early stopping
     total_loss = 0
     
-    # Declare arrays where the predictions and corresponding targets(labels) will be stored
-    all_preds = []
-    all_targets = []
-    
     # Declare holders for metrics
     FA = 0
     F1 = 0 
     temp_F1 = 0
     recall = 0
+    precision = 0
     localization_accuracy = 0
     detection_accuracy = 0
-    
-    # TO BE DELETED:
-    counter = 0
     
     # Make sure grads of the model won't be affected
     with torch.no_grad():
         for batch in valid_loader:
             batch = batch.to(device)
-            
-            # TO BE DELETED
-            counter += 1
 
             # Get model's raw output(logits)
             logits_nodes, logits_graph = model(
@@ -222,7 +323,7 @@ def validate(valid_loader):
             
             # Compute loss
             loss = criterion(logits_nodes, target_nodes)
-            loss += criterion(logits_graph, target_graph)
+            #loss += criterion(logits_graph, target_graph)
             total_loss += loss.item()
             
             # Apply activation function on the logits to get node-level probability
@@ -230,16 +331,11 @@ def validate(valid_loader):
             pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
             
             # Get graph-level classification:
-            graph_pred = (logits_graph > 0).long()
-            print(f"MUST BE THE LOGICALLY SAME: {logits_graph}, {graph_pred}")
+            graph_pred = (logits_graph >= 0.5).long()
             
             # Turn tensors into NumPy arrays
             pred_nodes = pred_nodes.cpu().numpy()
             target_nodes = target_nodes.cpu().numpy()
-            
-            # Append current outputs
-            all_preds.append(pred_nodes)
-            all_targets.append(target_nodes)
             
             # Calculate current metrics
             # Graph-wise
@@ -262,17 +358,37 @@ def validate(valid_loader):
                     FA += 1
             else:
                 # - Attack took place case -
-                # Compute FP, TN, and FA
+                # Compute predictions
                 FP = np.logical_and(pred_nodes == 1, target_nodes == 0).sum()
+                FN = np.logical_and(pred_nodes == 0, target_nodes == 1).sum()
+                TP = np.logical_and(pred_nodes == 1, target_nodes == 1).sum()
                 TN = np.logical_and(pred_nodes == 0, target_nodes == 0).sum()
+                
+                # Compute FA
                 FA += FP / (FP + TN)
                 
-                # Compute Recall and F1
-                temp_F1 = f1_score(target_nodes, pred_nodes, zero_division=0)
-                recall += recall_score(target_nodes, pred_nodes, zero_division=0) # DR
+                # Compute Recall(DR)
+                temp_recall = TP / (TP+FN)
+                recall += temp_recall
+                
+                # Compute Precision
+                prec_denom = (TP+FP)
+                if( prec_denom == 0 ):
+                    temp_prec = 0
+                else:
+                    temp_prec = TP / prec_denom
+                precision += temp_prec
+                
+                # Compute F1
+                if(temp_prec == 0 or temp_recall == 0):
+                    temp_F1 = 0
+                else:
+                    temp_F1 = 2*((temp_prec*temp_recall)/(temp_prec+temp_recall))
+                
                 
                 # Compute a strict match
                 if( np.array_equal(pred_nodes, target_nodes) ):
+                    print("+1 Strict match")
                     localization_accuracy += 1
             
             # Sample percentage having F1 >= 95%
@@ -280,22 +396,13 @@ def validate(valid_loader):
                  F1 += 1
             
             # TO BE DELETED:
-            print("Current F1: {temp_F1}, Num of buses with f1 > 95%: {F1}")
+            print(f"Attack: {target_graph}/{graph_pred}, Current F1: {temp_F1:.2f}, Num of buses with f1 > 95%: {F1}")
+            print(f"Number of ones exptected: {target_nodes.sum()}, predicted: {pred_nodes.sum()}\n")
                 
-        
-
-        # Concatenate across batches
-        all_preds   = np.asarray(all_preds)
-        all_targets = np.asarray(all_targets)
-    
-        # Metrics
-        precision = precision_score(all_targets, all_preds, zero_division=0, average="micro")
         
         # Number of elements in metrices (is used to get mean)
         n_elem_metrices = len(valid_loader)
-        # TO BE DELETED:
-        print(f"Must be the same, delete `counter` after debug: {counter}, {n_elem_metrices}")
-        return precision, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
+        return precision/n_elem_metrices, recall/n_elem_metrices, F1/n_elem_metrices, localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices, FA/n_elem_metrices, total_loss/n_elem_metrices
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -311,6 +418,19 @@ det_accuracies_arr = []
 f1_arr = []
 rec_arr = [] # DR
 fa_arr = []
+prec = 0
+
+checkpoint_name = ""
+if( config["model_selected"] == 0 ):
+    checkpoint_name = "CGCN"
+elif( config["model_selected"] == 1 ):
+    checkpoint_name = "ARMA" 
+elif( config["model_selected"] == 2 ):
+    checkpoint_name = "ARMATrans"
+elif( config["model_selected"] == 3 ):
+    checkpoint_name = "CNN"
+else:
+    raise IndexError("Incorrect model ID selected")
 
 for epoch in range(1, config["num_epochs"] + 1):
     # Conduct a training for a single epoch
@@ -332,23 +452,32 @@ for epoch in range(1, config["num_epochs"] + 1):
     print(f"Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
     print(f"FA={FA:.4f}, Validation Loss: {avg_loss:.4f}")
     print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
+    
+    best_loc = max(loc_accuracies_arr)
+    best_det = max(det_accuracies_arr)
+    best_f1 = max(f1_arr)
+    print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, Best detection={best_det*100:.2f} at epoch#{det_accuracies_arr.index(best_det)}")
+    print(f"Best f1: {best_f1:.3f} at epoch#{f1_arr.index(best_f1)}")
     print("----------------------------------------------------\n\n")
 
-    # Save checkpoint
-    save_checkpoint({
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'config': config,
-        'currentEpoch': epoch,
-        'trainingTime': time.time() - start,
-        'loc_accuracies': np.array(loc_accuracies_arr),
-        'det_accuracies': np.array(det_accuracies_arr),
-        'prec': prec,
-        'rec': rec_arr,
-        'f1': f1_arr,
-        'fa': fa_arr
-    })
-
+    # Save checkpoint every 5 epochs
+    if(epoch % 5 == 0):
+        save_checkpoint({
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'config': config,
+            'currentEpoch': epoch,
+            'trainingTime': time.time() - start,
+            'loc_accuracies': np.array(loc_accuracies_arr),
+            'det_accuracies': np.array(det_accuracies_arr),
+            'prec': prec,
+            'rec': rec_arr,
+            'f1': f1_arr,
+            'fa': fa_arr
+        }, checkpoint_name)
+        
+        print(f"Checkpoint saved at epoch#{epoch}")
+        
     # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
     if best_loss - avg_loss >= 1e-4:
         best_loss = avg_loss
@@ -358,4 +487,19 @@ for epoch in range(1, config["num_epochs"] + 1):
         if patience_counter >= 16:
             print(f"Early stopping: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
             break
+
+# Save checkpoint last time
+save_checkpoint({
+    'model_state_dict': model.state_dict(),
+    'optimizer_state_dict': optimizer.state_dict(),
+    'config': config,
+    'currentEpoch': config["num_epochs"],
+    'trainingTime': time.time() - start,
+    'loc_accuracies': np.array(loc_accuracies_arr),
+    'det_accuracies': np.array(det_accuracies_arr),
+    'prec': prec,
+    'rec': rec_arr,
+    'f1': f1_arr,
+    'fa': fa_arr
+}, checkpoint_name)
 

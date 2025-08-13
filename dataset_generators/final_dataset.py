@@ -34,16 +34,25 @@ Logic for non-sequential attacks:
 """
 
 TODOs:
+    - Stats without standardization:
+    - Stats with standardization:
+    - Stats with cyclic lr:
+    
+    - Try not to standardize(copy the unstandardized data aside, train on the standardized one and then on the regular)
+    - I think generators are skipped to be attacked but are still marked as attacked in the generated targets
+        Check on Ao
+        Check on regular attacks
+    
+    - Make sure that target matches the attacked nodes
+    - Confirm Ao is implemented correctly. To do so, go over the notes in attacker and the paper
+    
+    - (warm‐up + cosine decay) for scheduler
+    - Figure out why the gradients blow up so much
+    - No layer norm for ARMA?
+    
+    
     - Multiple random restarts of attack() if loss > TAU_LOSS
     - Lz might not affect the loss because measurement_model is not differentiable
-    
-    
-    - 600 warmup steps are the best so far for ARMA. Try 700
-    - Figure out the best max_norm
-    - Regenerate the dataset
-
-    - Use GraphNorm or BatchNorm on the node features, and LayerNorm before the Transformer.
-    - Write down info on LR with focus on F1 and then switch the focus to detection of FDIA  and rerun optuna
     
     - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
         of the reasons why my models don't fully converge
@@ -59,11 +68,15 @@ TODOs:
 # ---- Global variables ---- #
 # # # # # # # # # # # # # #  #
 
+# Avoid scientific notation
+torch.set_printoptions(sci_mode=False)
+
 dataset_config = {
     "normal_scaling": False,
     "max_timesteps": 44634,
     "number_nodes": 300,
     "net_template": pn.case300(),
+    "standardize_data": True,
     }
 
 dataset_config["G"] = pptop.create_nxgraph(dataset_config["net_template"], respect_switches=False, include_impedances=False)
@@ -106,7 +119,7 @@ irrelevant_buses = gen_buses | zero_inj_buses
 # Hyperparameters for Ao
 SIGMA_N = 0.005       # initial disturbance variance
 LAMBDA_Z = 1.0        # weight for measurement loss
-LAMBDA_Z = 1.0        # weight for state loss
+LAMBDA_X = 1.0        # weight for state loss
 ETA = 0.001           # learning rate for optimizer
 EPOCHS = 1000         # number of attack optimization epochs
 TAU_FREQ = 1.0        # attack frequency threshold
@@ -121,24 +134,24 @@ device = selectDevice()
 # ---- Functions ---- #
 # # # # # # # # # # # #
 
-# Utility: map complex state to pandapower net measurements
-def measurement_model(x_complex, net):
-    # Copy the net
-    net_copy = copy.deepcopy(net)
+# Utility: map complex state to net measurements
+def measurement_model(x_complex, Ybus, baseMVA):
+    # Compute complex power injection S = V * conj(I) = V * conj(Ybus @ V)
+    S = x_complex * torch.conj(Ybus @ x_complex)
     
-    # Calculate voltage and angle for each bus
-    mags = torch.abs(x_complex).detach().cpu().numpy()
-    angs = torch.angle(x_complex).detach().cpu().numpy() * 180/np.pi
+    # Extract real and imaginary parts
+    P = -S.real.float()*baseMVA      # active‐power injections
+    Q = -S.imag.float()*baseMVA      # reactive‐power injections
     
-    # Assign voltage and angle to each bus
-    net_copy.bus["vm_pu"] = mags
-    net_copy.bus["va_degree"] = angs
+    # Direct measurements
+    V_mag = torch.abs(x_complex).float()
+    angle_rad = torch.angle(x_complex).float()
     
-    # Run power flow to get measurements at this fake operating point
-    pp.runpp(net_copy, init='flat')
+    # Convert angle to degrees
+    angle_deg = angle_rad * (180.0 / torch.pi)
     
     # Extract bus measurements: p_mw, q_mvar, vm_pu, va_degree
-    res = net_copy.res_bus[['p_mw','q_mvar','vm_pu','va_degree']].values.flatten()
+    res = torch.cat([P, Q, V_mag, angle_deg], dim=0).flatten().to(device)
     
     return res
 
@@ -201,52 +214,23 @@ def run_psse(net, z, sigma_n, nodelist):
 
 
 class Attacker_Ao:
-    def __init__(self, net):
-        self.net = net
-        self.n = None
-        self.z0 = None
-        self.T_z = None
-        self.T_x = None
-        self.x_hat_phasor = None
+    def __init__(self, Ybus, baseMVA):
+        self.Ybus = Ybus
+        self.baseMVA = baseMVA
     
-    # Define zero‐order objective on full loss L = λz·Lz – λx·Lx
-    def obj(self, vth):
-        V  = vth[:self.n]
-        th = vth[self.n:]
-        
-        x_c = V * np.exp(1j * th)
-        za  = measurement_model(torch.tensor(x_c, dtype=torch.complex64), self.net)
-        
-        # stealth loss on honest measurements
-        mask_z = np.ones_like(za, bool);  
-        mask_z[self.T_z] = False
-        Lz = np.linalg.norm((za - self.z0)[mask_z], 2)
-        
-        # impact loss on honest states
-        mask_x = np.ones(self.n, bool);  
-        mask_x[self.T_x] = False
-        Lx = np.linalg.norm((x_c - self.x_hat_phasor)[mask_x], 1)
-        
-        return LAMBDA_Z * Lz - LAMBDA_Z * Lx
 
     def attack(self, z0, x_hat_phasor, V, th, T_z, T_x):
         # Number of nodes
-        self.n = len(x_hat_phasor)
-        
-        # Save values for reference from obj function
-        self.T_z = T_z
-        self.T_x = T_x
-        self.x_hat_phasor = x_hat_phasor
-        self.z0 = z0
+        n = len(x_hat_phasor)
         
         # Add noise to both V and th
-        noise = np.random.normal(0, SIGMA_N, size=V[self.T_x].shape)
-        V[self.T_x]  += noise
-        th[self.T_x] += noise
+        noise = np.random.normal(0, SIGMA_N, size=V[T_x].shape)
+        V[T_x]  += noise
+        th[T_x] += noise
         
         # Turn honest variables into torch variables:
-        z0_t     = torch.tensor(self.z0, dtype=torch.float32, device=device)
-        x_hat_t  = torch.tensor(self.x_hat_phasor,
+        z0_t     = torch.tensor(z0, dtype=torch.float32, device=device)
+        x_hat_t  = torch.tensor(x_hat_phasor,
                         dtype=torch.complex64,
                         device=device,
                         requires_grad=False)
@@ -255,12 +239,45 @@ class Attacker_Ao:
         V = torch.nn.Parameter(torch.from_numpy(V).float().to(device))
         th = torch.nn.Parameter(torch.from_numpy(th).float().to(device))
         
+        # Mask to train only chosen to be attacked nodes:
+        mask_training = torch.zeros_like(V.data)
+        mask_training[T_x] = 1.0
+        
         # Define optimizer and loss
-        optimizer = torch.optim.SGD([V, th], lr=ETA)
+        optimizer = torch.optim.Adam([V, th], lr=ETA)
         loss = None
+        
+        # Define masks for T_z and T_x
+        mask_z = torch.ones(4*n, dtype=bool); 
+        mask_z[T_z] = False
+        mask_x = torch.ones(n, dtype=bool); 
+        mask_x[T_x] = False
+        num_z = mask_z.sum().float()
+        num_x = mask_x.sum().float()
 
         # Minimize loss from L = LAMBDA_Z * Lz - LAMBDA_Z * Lx
         for epoch in range(EPOCHS):
+            # The goal of this training is to find a new x̃ that:
+            #   Maximally corrupts the measurements in Tₓ (the attacked nodes),
+            #   While keeping the measurements outside Tₓ (i.e. all i∉Tₓ) as close as possible to the originals.
+            
+            """
+            # Do I understand and utilize T_z and T_x correctly? I think T_z might not be what I think it is.
+            # Is my measurement_model function correct conceptually?  
+            
+            # How can I make Lz also affect the loss?
+            #   Maybe avoiding the use of pandapower and simply using the formula
+            #   from the paper will help me calculate grds for za => Lz will have effect on the loss
+            
+            # Should I clamp into [0.9,1.1] and [−π,π] every epoch?
+            
+            # Is Lz and Lx calculated as follows: "Then, for each epoch, it obtains za using 
+            #   h(x) and consequently calculates loss term Lz as a root mean
+            #   squared error between za and zo, and Lx as a mean absolute
+            #   error between ˇx and ˆx. Eventually"      
+            
+            """
+            
             optimizer.zero_grad()
         
             # clamp into [0.9,1.1] and [−π,π]
@@ -269,19 +286,20 @@ class Attacker_Ao:
         
             # build phasors and analytic measurements
             x_complex = V * torch.exp(1j * th)
-            za = torch.from_numpy(measurement_model(x_complex, self.net)).float().to(device)
+            za = measurement_model(x_complex, self.Ybus, self.baseMVA)
         
             # compute per-paper losses
-            mask_z = torch.ones(4*self.n, dtype=bool); 
-            mask_z[self.T_z] = False
-            mask_x = torch.ones(self.n,   dtype=bool); 
-            mask_x[self.T_x] = False
-        
-            Lz = torch.norm( (za[mask_z] - z0_t[mask_z]), p=2 )
-            Lx = torch.sum( torch.abs(x_complex[mask_x] - x_hat_t[mask_x]) )
-        
-            L = LAMBDA_Z * Lz - LAMBDA_Z * Lx
+            Lz = torch.norm( (za[mask_z] - z0_t[mask_z]), p=2 ) / torch.sqrt(num_z)
+            Lx = torch.sum( torch.abs(x_complex[mask_x] - x_hat_t[mask_x]) ) / num_x
+            
+            L = LAMBDA_Z * Lz - LAMBDA_X * Lx
             L.backward()
+            
+            # zero out grads where mask_training==0
+            V.grad.data  *= mask_training
+            th.grad.data *= mask_training
+            
+            # Update parameters based on the gradients (only nodes from T_x == 1 have influence)
             optimizer.step()
             
             loss = L.item()
@@ -289,19 +307,19 @@ class Attacker_Ao:
             if loss < TAU_LOSS:
                 break
         
-        # Compute complex state variable and transform it to numpy
+        # Compute complex state variable
         x_c_opt = V * torch.exp(1j * th)
-        x_c_opt = x_c_opt.cpu().detach().numpy()
+        #x_c_opt = (V * torch.exp(1j*th)).detach().cpu()
         
         # Get new Z
-        za_opt = measurement_model(torch.tensor(x_c_opt, dtype=torch.complex64), self.net)
-        return za_opt, loss
+        za_opt = measurement_model(x_c_opt, self.Ybus, self.baseMVA)
+        return za_opt.detach().cpu().numpy(), loss
 
 # Generate function per timestep
 def step_Ao( attacker, z0, x_hat, net, t):    
     # Initialize V and th
     V = abs(x_hat[:, 2])
-    th = x_hat[:,3] * np.pi/180
+    th = x_hat[:, 3] * np.pi/180
     
     # Compute x_phasor
     x_hat_phasor = V * np.exp(1j * th)
@@ -315,7 +333,7 @@ def step_Ao( attacker, z0, x_hat, net, t):
     z, loss = attacker.attack(z0, x_hat_phasor, V, th, T_z, T_x)
     # — build a length-n vector of 0/1 labels —
     y = np.zeros_like(x_hat_phasor, dtype=int)
-    y[T_x] = 1
+    y[T_x] = 1 # TODO: ! make sure the target is correct
     
     """
     print(loss)
@@ -348,23 +366,31 @@ def step_Ao( attacker, z0, x_hat, net, t):
 
 
 def worker_Ao(t_save, t_load):
-    # IEEE300 network
+    # Generate Ybus and base unit of measurements from the current network
     net = pn.case300()
-    attacker = Attacker_Ao(net)
+    pp.runpp(net)                              # just to build net._ppc
+    Ybus = net._ppc['internal']['Ybus']
+    Ybus = torch.tensor(Ybus.toarray(), dtype=torch.complex64, device=device)
+    baseMVA = net.sn_mva
+    
+    # Initialize the attacker with the Ybus and the unit computed
+    attacker = Attacker_Ao(Ybus, baseMVA)
 
     # Input holders
     z0 = np.load(f"../init_dataset/Z_{t_load}.npy")
-    x_hat = np.load(f"../init_dataset/Z_{t_load}.npy")
+    x_hat = np.load(f"../init_dataset/X_{t_load}.npy")
     
     # Flatten z0 for future calculations
     z0 = z0.flatten()
     
+    # Compute Z and X
     z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t_save)
     
     # Save current attacked sample
         # Exclude Voltage magnitude and angle
     z_att = z_att.reshape(300, 4)
     z_att = z_att[:, :2]
+    
     np.save(f'../final_dataset/Z_{t_save}.npy', z_att)
         
     # Estimeated X
@@ -377,16 +403,15 @@ def worker_Ao(t_save, t_load):
     return t_save  # for tracking progress
 
 
-def generate_Ao(start_id, finish_id, max_workers=12):
-    
-    # Un-paralleled generation for debugging
+def generate_Ao(start_id, finish_id, max_workers=2):
     """
+    # Un-paralleled generation for debugging
     for t_save in range(start_id, finish_id):
         print("Ao attack chosen")
         t_load = returnTimeStep()
         worker_Ao(t_save, t_load)
         print(f"Current cycle: #{t_save}")
-     """
+    """
     
     # Prepare timesteps for the parallel execution
     # ( in order to avoid undefined behavior )
@@ -427,7 +452,8 @@ def generate_Ad(t_save):
     # Extract all node features
     P = Z[:, 0]
     Q = Z[:, 1]
-  
+    
+    """
     # Don't follow outliners, so that the attack is not as easy to detect
     # Get mean and STD for 90% of P
     lo, hi = np.percentile(P, [5,95])
@@ -438,14 +464,15 @@ def generate_Ad(t_save):
     lo, hi = np.percentile(Q, [5,95])
     Q_trim = Q[(Q>=lo)&(Q<=hi)]
     Q_mu, Q_std  = Q_trim.mean(), Q_trim.std()
-    
-    # Attack buses that have some load only (otherwise => easy to detect)
-    mask_P = mask & (P != 0)
-    mask_Q = mask & (Q != 0)
   
     # Apply the distribution-based attack on the marked buses
-    Z[mask_P, 0] = np.random.normal(P_mu, P_std, size=mask_P.sum())
-    Z[mask_Q, 1] = np.random.normal(Q_mu, Q_std, size=mask_Q.sum())
+    Z[mask, 0] = np.random.normal(P_mu, P_std, size=mask_P.sum())
+    Z[mask, 1] = np.random.normal(Q_mu, Q_std, size=mask_Q.sum())
+    """
+    
+    # Apply the distribution-based attack on the marked buses
+    Z[mask, 0] = np.random.normal(P.mean(), P.std(), size=mask.sum())
+    Z[mask, 1] = np.random.normal(Q.mean(), Q.std(), size=mask.sum())
     
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
@@ -606,44 +633,44 @@ if __name__ == '__main__':
     for t in range(31681, 34561):
       print(f"\nNot-attacked, Current cycle: #{t}")
       generate_honest(t)
+  
+    if( dataset_config["standardize_data"] ):
+        # ! ---- Standardization ---- !
+        # Load in the training dataset
+        root = "../final_dataset"
+        Z_list = []
+        
+        for i in range(1, 23041):
+            file_path = os.path.join(root, f"Z_{i}.npy")
+            if os.path.exists(file_path):  # check if file exists
+                Z_list.append(file_path)
+            else:
+                raise RuntimeError(f"Z_{i}.npy doesn't exist ->  dataset is corrupted")
     
+        # Compute mean & std
+        sum_   = 0.0
+        sumsq  = 0.0
+        count  = 0
     
-    # ! ---- Standardization ---- !
-    # Load in the training dataset
-    root = "../final_dataset"
-    Z_list = []
+        for fn in Z_list:
+            arr = np.load(fn)
+            sum_  += arr.sum()
+            sumsq += (arr**2).sum()
+            count += arr.size
     
-    for i in range(1, 23041):
-        file_path = os.path.join(root, f"Z_{i}.npy")
-        if os.path.exists(file_path):  # check if file exists
-            Z_list.append(file_path)
-        else:
-            raise RuntimeError(f"Z_{i}.npy doesn't exist ->  dataset is corrupted")
-
-    # Compute mean & std
-    sum_   = 0.0
-    sumsq  = 0.0
-    count  = 0
-
-    for fn in Z_list:
-        arr = np.load(fn)
-        sum_  += arr.sum()
-        sumsq += (arr**2).sum()
-        count += arr.size
-
-    mean = sum_ / count
-    var  = sumsq / count - mean**2
-    std  = np.sqrt(var)
-
-    print(f"Training dataset, mean = {mean:.5f},  std = {std:.5f}")
+        mean = sum_ / count
+        var  = sumsq / count - mean**2
+        std  = np.sqrt(var)
     
-    # Load in all files:
-    pattern = os.path.join(root, "Z_*.npy")
-    files = glob.glob(pattern)
-
-    # Standardize each file
-    for fn in files:
-        arr = np.load(fn)
-        arr = (arr - mean) / std
-        base = os.path.basename(fn)
-        np.save(os.path.join(root, base), arr)
+        print(f"Training dataset, mean = {mean:.5f},  std = {std:.5f}")
+        
+        # Load in all files:
+        pattern = os.path.join(root, "Z_*.npy")
+        files = glob.glob(pattern)
+    
+        # Standardize each file
+        for fn in files:
+            arr = np.load(fn)
+            arr = (arr - mean) / std
+            base = os.path.basename(fn)
+            np.save(os.path.join(root, base), arr)

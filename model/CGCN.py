@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import ChebConv, BatchNorm
+from torch_geometric.nn import ChebConv
 import torch.nn.utils as utils
 from torch_geometric.utils import to_dense_batch
+from torch_geometric.utils import get_laplacian
 
 # TODO: to be deleted
 import sys
@@ -20,80 +21,58 @@ class CGCN(nn.Module):
       
       Batch normalization layers help
     """
-    def __init__(self, in_channels, u, Ks, dropout=0.1, num_nodes=2848, trial=None ):
+    def __init__(self, in_channels, num_CGCN_layers, u, Ks, dropout=0.1, num_nodes=300 ):
         super(CGCN, self).__init__()
         
+        # Local parameter
         self.num_nodes = num_nodes
+     
         
-        self.chebConv1 = ChebConv(in_channels, u, Ks)
-        self.dropout1 = nn.Dropout(dropout)
+        # Chebuchev Conv layers (Dynamic definition)
+        self.chebConvs = nn.ModuleList()
+        for index in range(num_CGCN_layers):
+            in_channels = in_channels if index == 0 else u
+            
+            self.chebConvs.append( ChebConv(in_channels, u, Ks) )
+    
+        
+        # Layer Normalizations
+        self.layerNorms = nn.ModuleList()
+        for index in range(num_CGCN_layers // 2):
+            self.layerNorms.append( nn.LayerNorm(u) )
+        
+        # Dropouts
+        self.dropouts = nn.ModuleList()
+        for index in range(num_CGCN_layers):
+            self.dropouts.append( nn.Dropout(dropout) )
+        
+        
+        self.classifier  = nn.Linear(u, 1) # Transforms each node's into a single feature node
 
-        self.chebConv2 = ChebConv(u, u, Ks)
-        self.dropout2 = nn.Dropout(dropout)
-
-        self.chebConv3 = ChebConv(u, u, Ks)
-        self.dropout3 = nn.Dropout(dropout)
-
-        self.chebConv4 = ChebConv(u, u, Ks)
-        self.dropout4 = nn.Dropout(dropout)
-        
-        """
-        self.chebConv5 = ChebConv(u, u, Ks)
-        self.bn5 = BatchNorm(u)
-        self.dropout5 = nn.Dropout(dropout)
-        """
-        
-        self.flatten = nn.Flatten(start_dim=1)
-        
-        self.node_head  = nn.Linear(u, 1) # Transforms each node's into a single feature node
-        self.graph_head = nn.Linear(u*num_nodes, 1) # Transforms an entire graph of nodes into a single value
-
-    def forward(self, x, edge_index, weights, batch):
-        # 4 CGCN layers
-        # Relu and Dropout are applied after each one of them
-        x = self.chebConv1(x, edge_index, weights)
-        x = F.relu(x)
-        x = self.dropout1(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv1")
-        
-        x = self.chebConv2(x, edge_index, weights)
-        x = F.relu(x)
-        x = self.dropout2(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv2")
-        
-        x = self.chebConv3(x, edge_index, weights)
-        x = F.relu(x)
-        x = self.dropout3(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv3")
-        
-        x = self.chebConv4(x, edge_index, weights)
-        x = F.relu(x)
-        x = self.dropout4(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv4")
-        
-        """
-        x = self.chebConv5(x, edge_index, weights)
-        x = self.bn5(x)
-        x = F.relu(x)
-        x = self.dropout5(x)
-        #if torch.isnan(x).any() or torch.isinf(x).any():
-        #    raise RuntimeError("NaN/Inf in x → after chebConv4")
-        """
+    def forward(self, x, edge_index, weights, batch): 
+        # Dynamically go over each ChebConv with layerNorm added after every 2nd chebConv
+        for idx, chebConv in enumerate(self.chebConvs):
+            x = chebConv(x, edge_index, weights)
+            
+            if (idx+1) % 2 == 0:
+                x = self.layerNorms[idx//2](x) # every 2nd iteration has this layer
+            
+            x = F.relu(x)
+            x = self.dropouts[idx](x)
+            
+            if not torch.isfinite(x).all():
+                raise ValueError(f"Layer#{idx} output NaNs/Infs")
         
         # from [total_nodes, u] → [batch_size, num_nodes, u]
         x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
         
-        # Node-level logits: [B, N]
-        logits_nodes = self.node_head(x).squeeze(-1)
+        # Classification logits per node (Localizing an attack)
+        logits_nodes = self.classifier(x).squeeze(-1)              # [batch_size, num_nodes]
+        if not torch.isfinite(logits_nodes).all():
+            raise ValueError("Classifier output NaNs/Infs")
         
-        # Graph-level logits: [B]
-        logits_graph = self.graph_head(x.flatten(start_dim=1)).squeeze(-1)
-
-        # Avoid NaN, inf
-        #x = x.nan_to_num(0.0, posinf=1e6, neginf=-1e6)
+        # Classification logits per graph (Identifying an attack)
+        logits_graph = logits_nodes.max(dim=1).values # choose max one
+        
 
         return logits_nodes, logits_graph

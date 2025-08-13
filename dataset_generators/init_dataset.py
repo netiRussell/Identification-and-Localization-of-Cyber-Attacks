@@ -412,7 +412,7 @@ np.save("../init_dataset/neighbors", np.array(neighbors, dtype=object))
 # -- For L timesteps, generate a sample --
 if __name__ == "__main__":
     idx = 1
-    with ProcessPoolExecutor(max_workers=12) as exe:
+    with ProcessPoolExecutor(max_workers=2) as exe:
         # map ensures all 36 000 t’s are processed in parallel
         for result in exe.map(worker, range(len(S)), itertools.repeat(G), itertools.repeat(nodelist) ):
             if result is None:

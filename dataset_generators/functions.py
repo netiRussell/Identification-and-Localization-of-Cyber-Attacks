@@ -10,6 +10,11 @@ from torch_geometric.loader import DataLoader
 import pandapower.topology as pptop
 import networkx as nx
 
+from model.ARMA import GNNArma
+from model.ARMA_Transformer import GNNArmaTransformer
+from model.CGCN import CGCN
+from model.CNN import CNN
+
 # TODO: To be deleted
 import sys
 # Enable reproducibility
@@ -86,7 +91,7 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
     # Create an empty mask
     mask = np.full(number_nodes, False, dtype="bool")
     
-    # Fill the mask with the buses to be attacked
+    # Fill the mask with the buses to be attacked (otherwise => easy to detect)
     mask[T_x] = True
     
     # Z = Node features array
@@ -125,7 +130,7 @@ def load_honest( t_load, number_nodes=300 ):
   return Z, mask
 
 
-def save_checkpoint(state, path='./saved_grads/'):
+def save_checkpoint(state, name="checkpoint", path='./saved_grads/'):
     """
     Saves current progress as a .tar file
 
@@ -147,7 +152,7 @@ def save_checkpoint(state, path='./saved_grads/'):
     timestamp = now.strftime("%Y_%m_%d")
     
     # Define the final path with file name
-    finalPath = path + "checkpoint" + timestamp + ".pth.tar"
+    finalPath = path + name + timestamp + ".tar"
     
     """
     # Make sure not to overwrite previous saved grads
@@ -274,8 +279,8 @@ def preparePyGDataset(config, FDIADataset):
     test_dataset = FDIADataset(test_indices, config["dataset_root"])
 
     # Define loaders for each data subset to sequentially load batches
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-    valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, pin_memory=True)
+    valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # Get input features (Size of X in the first dimension)
@@ -346,6 +351,115 @@ def generateDatasetStandardScaler( indices ):
     # Save the scaler to disk (you can also just save mean_/scale_ arrays):
     joblib.dump(scaler, "train_scaler.joblib")
 
+
+# -- Definitions of the models --
+def define_modelCGCN(hyperparams, config):
+    
+    if hyperparams == None:
+        model = CGCN(
+            in_channels=config["in_channels"],
+            num_CGCN_layers=config["cgcn_specific"]["num_CGCN_layers"],
+            u=config["cgcn_specific"]["u"],
+            Ks=config["cgcn_specific"]["Ks"],
+            dropout=config["cgcn_specific"]["dropout"],
+            num_nodes = config["num_nodes"],
+        )
+    else:
+        # Required hyperparams content: num_CGCN_layers, dropout, u, Ks
+        model = CGCN(
+            in_channels=config["in_channels"],
+            num_CGCN_layers=hyperparams["num_CGCN_layers"],
+            u=hyperparams["u"],
+            Ks=hyperparams["Ks"],
+            dropout=hyperparams["dropout"],
+            num_nodes = config["num_nodes"],
+        )
+    
+    return model
+
+def define_modelARMA(hyperparams, config):
+    if hyperparams == None:
+        model = GNNArma(
+            in_channels=config["in_channels"], 
+            num_ARMA_layers=config["arma_specific"]["num_ARMA_layers"],
+            hidden_channels=config["arma_specific"]["hidden_channels"],
+            num_stacks=config["arma_specific"]["num_stacks"],
+            num_layers=config["arma_specific"]["num_layers"], 
+            dropout=config["arma_specific"]["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    else:
+        # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, num_stacks, num_layers
+        model = GNNArma(
+            in_channels=config["in_channels"], 
+            num_ARMA_layers=hyperparams["num_ARMA_layers"],
+            hidden_channels=hyperparams["hidden_channels"],
+            num_stacks=hyperparams["num_stacks"],
+            num_layers=hyperparams["num_layers"], 
+            dropout=hyperparams["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    
+    return model
+
+def define_modelTransformer(hyperparams, config):
+    if hyperparams == None:
+        model = GNNArmaTransformer(
+            in_channels=config["in_channels"],
+            num_ARMA_layers=config["transformer_specific"]["num_ARMA_layers"],
+            hidden_channels=config["transformer_specific"]["hidden_channels"],
+            d_model_channels=config["transformer_specific"]["d_model_channels"],
+            num_stacks=config["transformer_specific"]["num_stacks"], 
+            num_layers=config["transformer_specific"]["num_layers"],
+            transformer_heads=config["transformer_specific"]["transformer_heads"],
+            transformer_layers=config["transformer_specific"]["transformer_layers"],
+            dropout=config["transformer_specific"]["dropout"],
+            num_nodes=config["num_nodes"],
+            leakyRelu_rate=config["transformer_specific"]["leakyRelu_rate"]
+        )
+    else:
+        # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, d_model_channels, 
+        #                               num_stacks, num_layers, transformer_layers
+        model = GNNArmaTransformer(
+            in_channels=config["in_channels"],
+            num_ARMA_layers=hyperparams["num_ARMA_layers"],
+            hidden_channels=hyperparams["hidden_channels"],
+            d_model_channels=hyperparams["d_model_channels"],
+            num_stacks=hyperparams["num_stacks"], 
+            num_layers=hyperparams["num_layers"],
+            transformer_heads=config["transformer_specific"]["transformer_heads"],
+            transformer_layers=hyperparams["transformer_layers"],
+            dropout=hyperparams["dropout"],
+            num_nodes=config["num_nodes"],
+            leakyRelu_rate=config["transformer_specific"]["leakyRelu_rate"]
+        )
+    
+    return model
+
+def define_modelCNN(hyperparams, config):
+    if hyperparams == None:
+        model = CNN(
+            in_channels=config["in_channels"], 
+            num_CNN_layers=config["cnn_specific"]["num_CNN_layers"],
+            Ks=config["cnn_specific"]["Ks"],
+            units=config["cnn_specific"]["units"],
+            padding=config["cnn_specific"]["padding"],
+            dropout=config["cnn_specific"]["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    else:
+        # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, num_stacks, num_layers
+        model = CNN(
+            in_channels=config["in_channels"], 
+            num_CNN_layers=hyperparams["num_CNN_layers"],
+            Ks=hyperparams["Ks"],
+            units=hyperparams["units"],
+            padding=hyperparams["padding"],
+            dropout=hyperparams["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    
+    return model
 
 # # # # # # # # # # # # # # # #
 # ---- Private functions ---- #
