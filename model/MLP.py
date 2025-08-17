@@ -28,8 +28,7 @@ class MLP(nn.Module):
         # Layer Normalizations
         self.layerNorms = nn.ModuleList()
         for index in range(num_MLP_layers // 2):
-            u = 1 if (index+1)*2 == num_MLP_layers else units
-            self.layerNorms.append( nn.LayerNorm(u) )
+            self.layerNorms.append( nn.LayerNorm(units) )
         
         # Dropouts
         self.dropouts = nn.ModuleList()

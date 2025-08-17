@@ -14,6 +14,8 @@ from model.ARMA import GNNArma
 from model.ARMA_Transformer import GNNArmaTransformer
 from model.CGCN import CGCN
 from model.CNN import CNN
+from model.MLP import MLP
+from model.LSTM import LSTM
 
 # TODO: To be deleted
 import sys
@@ -459,6 +461,47 @@ def define_modelCNN(hyperparams, config):
             num_nodes=config["num_nodes"]
         )
     
+    return model
+
+def define_modelMLP(hyperparams, config):
+    if hyperparams == None:
+        model = MLP(
+            in_channels=config["in_channels"], 
+            num_MLP_layers=config["mlp_specific"]["num_MLP_layers"],
+            units=config["mlp_specific"]["units"],
+            dropout=config["mlp_specific"]["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    else:
+        # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, num_stacks, num_layers
+        model = MLP(
+            in_channels=config["in_channels"], 
+            num_MLP_layers=hyperparams["num_MLP_layers"],
+            units=hyperparams["units"],
+            dropout=hyperparams["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    
+    return model
+
+def define_modelLSTM(hyperparams, config):
+    if hyperparams == None:
+        model = LSTM(
+            in_channels=config["in_channels"], 
+            num_LSTM_layers=config["lstm_specific"]["num_LSTM_layers"],
+            units=config["lstm_specific"]["units"],
+            dropout=config["lstm_specific"]["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    else:
+        model = LSTM(
+            in_channels=config["in_channels"], 
+            num_LSTM_layers=hyperparams["num_LSTM_layers"],
+            units=hyperparams["units"],
+            dropout=hyperparams["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+        
     return model
 
 # # # # # # # # # # # # # # # #

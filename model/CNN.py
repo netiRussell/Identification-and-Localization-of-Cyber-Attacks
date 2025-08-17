@@ -17,7 +17,7 @@ class CNN(nn.Module):
         self.in_channels = in_channels
         self.num_nodes = num_nodes
         
-        # ARMA convolutional graph layers (Dynamic definition)
+        # CNN layers (Dynamic definition)
         self.CNNconvs = nn.ModuleList()
         for index in range(num_CNN_layers):
             in_channels = in_channels if index == 0 else units
@@ -25,9 +25,9 @@ class CNN(nn.Module):
                                   kernel_size=Ks, padding=padding) )
         
         # Group Normalizations
-        self.GroupNorms = nn.ModuleList()
+        self.groupNorms = nn.ModuleList()
         for index in range(num_CNN_layers // 2):
-            self.GroupNorms.append( GroupNorm(units/8, units) )
+            self.groupNorms.append( GroupNorm(int(units/8), units) )
         
         # Dropouts
         self.dropouts = nn.ModuleList()
@@ -45,7 +45,7 @@ class CNN(nn.Module):
         # For Conv1d, go to [B, C, N]
         x = x.permute(0, 2, 1).contiguous()
         
-        # Dynamically go over each ArmaConv with layerNorm added after every 2nd ArmaConv
+        # Dynamically go over each CNN with layerNorm added after every 2nd CNN
         for idx, CNNLayer in enumerate(self.CNNconvs):
             x = CNNLayer(x)
             
