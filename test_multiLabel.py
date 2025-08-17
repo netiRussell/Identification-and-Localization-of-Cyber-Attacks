@@ -4,9 +4,11 @@ from model.ARMA_Transformer import GNNArmaTransformer
 import random
 import numpy as np
 from sklearn.metrics import f1_score
+import time
 
 from dataset import FDIADataset
 from dataset_generators.functions import visualizeLossValid, preparePyGDataset, selectDevice
+from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer, define_modelCNN, define_modelMLP, define_modelLSTM
 
 # TODO: delete at the final stage
 import sys
@@ -22,7 +24,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "ARMAElite"
+    "checkpoint_name": "ARMATransElite"
     }
 
 
@@ -38,32 +40,7 @@ _, _, test_loader, in_feats = preparePyGDataset(config, FDIADataset)
 
 
 # -- Instantiate model --
-# Define the model
-
-model = GNNArma(
-    in_channels=config["in_channels"], 
-    num_ARMA_layers=config["arma_specific"]["num_ARMA_layers"],
-    hidden_channels=config["arma_specific"]["hidden_channels"],
-    num_stacks=config["arma_specific"]["num_stacks"],
-    num_layers=config["arma_specific"]["num_layers"], 
-    dropout=config["arma_specific"]["dropout"],
-    num_nodes=config["num_nodes"]
-)
-"""
-model = GNNArmaTransformer(
-    in_channels=config["in_channels"],
-    hidden_channels=config["hidden_channels"],
-    out_channels=config["out_channels"],
-    num_stacks=config["num_stacks"], 
-    num_layers=config["num_layers"],
-    transformer_heads=config["transformer_heads"],
-    transformer_layers=config["transformer_layers"],
-    dropout=config["dropout"],
-    num_nodes=config["num_nodes"],
-    leakyRelu_rate=config["leakyRelu_rate"]
-)
-"""
-
+model = define_modelTransformer(None, config)
 model = model.to(device)
 model.load_state_dict(checkpoint['model_state_dict'])
 
@@ -75,7 +52,9 @@ model.eval()
 with torch.no_grad():
     det_correct = 0
     F1_95 = 0.0
+    overal_F1 = 0.0
     temp_F1 = 0.0
+    avg_output_time = 0.0
     total = len(test_loader)
     
     Ao_F1_95 = 0.0
@@ -106,7 +85,9 @@ with torch.no_grad():
         target_nodes = sample.y
         
         # Get output
+        start_time = time.perf_counter()
         sample = sample.to(device)
+        avg_output_time += time.perf_counter()-start_time
         logits_nodes, logits_graph = model(sample.x, sample.edge_index, weights=sample.edge_attr, batch=sample.batch)
         
         # -- Graph-wise output -- 
@@ -135,6 +116,9 @@ with torch.no_grad():
             # - Attack took place case -
             # Compute F1
             temp_F1 = f1_score(target_nodes, pred_nodes.view(-1).cpu(), zero_division=0)
+        
+        # Overall average F1
+        overal_F1 += temp_F1
         
         # Sample percentage having F1 >= 95%
         if(temp_F1 >= 0.95):
@@ -170,6 +154,8 @@ with torch.no_grad():
     
     # Final conclusion
     print("---------------------------------------------")
+    print(f"Average time for a single sample output: {(avg_output_time/total)*1000}ms")
+    print(f"Overall average F1: {overal_F1/total}%")
     print(f"TOTAL({total}) F1>95% percentage of samples: {((F1_95 / total) * 100):.2f}%")
     print(f"TOTAL({total}) Detection test score: {((det_correct / total) * 100):.2f}%\n")
     
