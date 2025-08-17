@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 
 from dataset import FDIADataset
 from dataset_generators.functions import save_checkpoint, preparePyGDataset, selectDevice
-from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer, define_modelCNN
+from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer, define_modelCNN, define_modelMLP, define_modelLSTM
 
 # TODO: delete at the final stage
 import sys
@@ -61,6 +61,8 @@ config = {
                   #1 = ARMA
                   #2 = ARMA-Transformer
                   #3 = CNN
+                  #4 = MLP
+                  #5 = LSTM
               
               "cgcn_specific": {
                   "lr": 1e-4, 
@@ -113,7 +115,29 @@ config = {
                   "Ks": 3,
                   "units": 64,
                   "padding": "same",
-                  "dropout": 0.5,
+                  "dropout": 0.2,
+                  "pos_weight": 2,
+                  },
+              
+              "mlp_specific": {
+                  "lr": 1e-3, 
+                  "weight_decay": 1e-2,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
+                  
+                  "num_MLP_layers": 4,
+                  "units": 128,
+                  "dropout": 0.2,
+                  "pos_weight": 4.5,
+                  },
+              
+              "lstm_specific": {
+                  "lr": 1e-3, 
+                  "weight_decay": 1e-2,
+                  "n_lrWarmup_steps": 500, # 1 batch = 1 step
+                  
+                  "num_LSTM_layers": 3,
+                  "units": 128,
+                  "dropout": 0.2,
                   "pos_weight": 4.5,
                   },
               
@@ -171,6 +195,24 @@ elif( config["model_selected"] == 3 ):
     pos_weight = config["cnn_specific"]["pos_weight"]
     n_lrWarmup_steps = config["cnn_specific"]["n_lrWarmup_steps"]
 
+elif( config["model_selected"] == 4 ):
+    print("MLP selected for the training")
+    
+    model = define_modelMLP(None, config).to(device)
+    lr = config["mlp_specific"]["lr"]
+    weight_decay = config["mlp_specific"]["weight_decay"]
+    pos_weight = config["mlp_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["mlp_specific"]["n_lrWarmup_steps"]
+    
+elif( config["model_selected"] == 5 ):
+    print("LSTM selected for the training")
+    
+    model = define_modelLSTM(None, config).to(device)
+    lr = config["lstm_specific"]["lr"]
+    weight_decay = config["lstm_specific"]["weight_decay"]
+    pos_weight = config["lstm_specific"]["pos_weight"]
+    n_lrWarmup_steps = config["lstm_specific"]["n_lrWarmup_steps"]
+    
 else:
     raise IndexError("Incorrect model ID selected")
     
@@ -433,6 +475,10 @@ elif( config["model_selected"] == 2 ):
     checkpoint_name = "ARMATrans"
 elif( config["model_selected"] == 3 ):
     checkpoint_name = "CNN"
+elif( config["model_selected"] == 4 ):
+    checkpoint_name = "MLP"
+elif( config["model_selected"] == 5 ):
+    checkpoint_name = "LSTM"
 else:
     raise IndexError("Incorrect model ID selected")
 
