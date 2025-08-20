@@ -10,12 +10,14 @@ from torch_geometric.loader import DataLoader
 import pandapower.topology as pptop
 import networkx as nx
 
+"""
 from model.ARMA import GNNArma
 from model.ARMA_Transformer import GNNArmaTransformer
 from model.CGCN import CGCN
 from model.CNN import CNN
 from model.MLP import MLP
 from model.LSTM import LSTM
+"""
 
 # TODO: To be deleted
 import sys
@@ -84,16 +86,20 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
     T_x: list of integers
         List of nodes to be attacked
     """
-    lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
-    attacked_buses = list(lengths.keys())
+    T_x = list()
     
-    # Filter out the 0-injection and generator buses
-    T_x = [b for b in attacked_buses if b not in irrelevant_buses]
+    # Make sure the number of attacked buses are always >= 5
+    while(len(T_x) < 5):
+        lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
+        attacked_buses = list(lengths.keys())
+    
+        # Filter out the 0-injection and generator buses (otherwise => easy to detect)
+        T_x = [b for b in attacked_buses if b not in irrelevant_buses]
     
     # Create an empty mask
     mask = np.full(number_nodes, False, dtype="bool")
     
-    # Fill the mask with the buses to be attacked (otherwise => easy to detect)
+    # Fill the mask with the buses to be attacked
     mask[T_x] = True
     
     # Z = Node features array

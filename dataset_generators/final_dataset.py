@@ -73,7 +73,7 @@ torch.set_printoptions(sci_mode=False)
 
 dataset_config = {
     "normal_scaling": False,
-    "max_timesteps": 44634,
+    "max_timesteps": 44634+1,
     "number_nodes": 300,
     "net_template": pn.case300(),
     "standardize_data": True,
@@ -126,6 +126,7 @@ TAU_FREQ = 1.0        # attack frequency threshold
 TAU_LOSS = 0.1        # attack quality (loss) threshold
 R_MIN = 6             # minimum attack radius for IEEE300
 R_MAZ = 8             # maximum attack radius for IEEE300
+SENSOR_SIGMA = 0.01   # match the sigma used in the init_dataset
 device = selectDevice()
 
 
@@ -151,9 +152,7 @@ def measurement_model(x_complex, Ybus, baseMVA):
     angle_deg = angle_rad * (180.0 / torch.pi)
     
     # Extract bus measurements: p_mw, q_mvar, vm_pu, va_degree
-    res = torch.cat([P, Q, V_mag, angle_deg], dim=0).flatten().to(device)
-    
-    return res
+    return torch.stack([P, Q, V_mag, angle_deg], dim=1)  # (n,4)
 
 # Build attack surface via BFS on IEEE300 graph
 def bfs_attack_surface(net, entry_bus, radius):
@@ -248,12 +247,11 @@ class Attacker_Ao:
         loss = None
         
         # Define masks for T_z and T_x
-        mask_z = torch.ones(4*n, dtype=bool); 
-        mask_z[T_z] = False
-        mask_x = torch.ones(n, dtype=bool); 
-        mask_x[T_x] = False
-        num_z = mask_z.sum().float()
-        num_x = mask_x.sum().float()
+        attacked = torch.zeros(n, dtype=torch.bool, device=device)
+        attacked[T_x] = True
+        keep = ~attacked  # non-attacked buses
+
+        den_z = torch.sqrt(keep.sum().float() * 4.0) + 1e-12
 
         # Minimize loss from L = LAMBDA_Z * Lz - LAMBDA_Z * Lx
         for epoch in range(EPOCHS):
@@ -289,15 +287,18 @@ class Attacker_Ao:
             za = measurement_model(x_complex, self.Ybus, self.baseMVA)
         
             # compute per-paper losses
-            Lz = torch.norm( (za[mask_z] - z0_t[mask_z]), p=2 ) / torch.sqrt(num_z)
-            Lx = torch.sum( torch.abs(x_complex[mask_x] - x_hat_t[mask_x]) ) / num_x
+            z0_mat = z0_t.view(n, 4)   # reshape honest z
+
+            Lz = torch.linalg.vector_norm((za[keep] - z0_mat[keep]).reshape(-1)) / den_z
+            
+            Lx = torch.mean(torch.abs(x_complex[attacked] - x_hat_t[attacked]))
             
             L = LAMBDA_Z * Lz - LAMBDA_X * Lx
             L.backward()
             
-            # zero out grads where mask_training==0
-            V.grad.data  *= mask_training
-            th.grad.data *= mask_training
+            # zero out grads in the non-attacked nodes
+            V.grad  *= attacked.float()
+            th.grad *= attacked.float()
             
             # Update parameters based on the gradients (only nodes from T_x == 1 have influence)
             optimizer.step()
@@ -313,6 +314,7 @@ class Attacker_Ao:
         
         # Get new Z
         za_opt = measurement_model(x_c_opt, self.Ybus, self.baseMVA)
+        
         return za_opt.detach().cpu().numpy(), loss
 
 # Generate function per timestep
@@ -369,10 +371,14 @@ def worker_Ao(t_save, t_load):
     # Generate Ybus and base unit of measurements from the current network
     net = pn.case300()
     pp.runpp(net)                              # just to build net._ppc
-    Ybus = net._ppc['internal']['Ybus']
-    Ybus = torch.tensor(Ybus.toarray(), dtype=torch.complex64, device=device)
-    baseMVA = net.sn_mva
     
+    Y_ppc = net._ppc['internal']['Ybus'].toarray()
+    pd2ppc = net._pd2ppc_lookups['bus']        # map: pandapower index -> ppc index
+    Y_aligned = Y_ppc[pd2ppc][:, pd2ppc]       # reindex Ybus into pandapower order
+    
+    Ybus = torch.tensor(Y_aligned, dtype=torch.complex64, device=device)
+    baseMVA = net.sn_mva
+
     # Initialize the attacker with the Ybus and the unit computed
     attacker = Attacker_Ao(Ybus, baseMVA)
 
@@ -386,11 +392,15 @@ def worker_Ao(t_save, t_load):
     # Compute Z and X
     z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t_save)
     
-    # Save current attacked sample
-        # Exclude Voltage magnitude and angle
-    z_att = z_att.reshape(300, 4)
+    # Exclude Voltage magnitude and angle
     z_att = z_att[:, :2]
     
+    # Add noise to match the other FDIAs 
+    # (init_dataset adds noise to Z and other FDIAs reuse Z but Ao doesn't) 
+    z_att += np.random.normal(0.0, np.abs(z_att)*SENSOR_SIGMA, size=z_att.shape)
+    
+    
+    # Save current attacked sample
     np.save(f'../final_dataset/Z_{t_save}.npy', z_att)
         
     # Estimeated X
@@ -450,30 +460,45 @@ def generate_Ad(t_save):
     print("Ad attack chosen")
         
     # Extract all node features
-    P = Z[:, 0]
-    Q = Z[:, 1]
+    P = Z[:, 0].copy()
+    Q = Z[:, 1].copy()
     
-    """
+    
     # Don't follow outliners, so that the attack is not as easy to detect
-    # Get mean and STD for 90% of P
-    lo, hi = np.percentile(P, [5,95])
-    P_trim = P[(P>=lo)&(P<=hi)]
-    P_mu, P_std  = P_trim.mean(), P_trim.std()
+    # Trim outliers (5–95%)
+    P_lo, P_hi = np.percentile(P, [5, 95])
+    Q_lo, Q_hi = np.percentile(Q, [5, 95])
     
-    # Get mean and STD for 90% of Q
-    lo, hi = np.percentile(Q, [5,95])
-    Q_trim = Q[(Q>=lo)&(Q<=hi)]
-    Q_mu, Q_std  = Q_trim.mean(), Q_trim.std()
-  
-    # Apply the distribution-based attack on the marked buses
-    Z[mask, 0] = np.random.normal(P_mu, P_std, size=mask_P.sum())
-    Z[mask, 1] = np.random.normal(Q_mu, Q_std, size=mask_Q.sum())
+    P_trim = P[(P >= P_lo) & (P <= P_hi)]
+    Q_trim = Q[(Q >= Q_lo) & (Q <= Q_hi)]
+    
+    P_mu, P_std = P_trim.mean(), P_trim.std(ddof=0)
+    Q_mu, Q_std = Q_trim.mean(), Q_trim.std(ddof=0)
+    
+    # Avoid zero/NaN std
+    eps = 1e-6
+    P_std = float(max(P_std, eps))
+    Q_std = float(max(Q_std, eps))
+    
+    k = int(mask.sum())
+    new_P = np.random.normal(P_mu, P_std, size=k)
+    new_Q = np.random.normal(Q_mu, Q_std, size=k)
+    
+    # Keep within trimmed bounds
+    new_P = np.clip(new_P, P_lo, P_hi)
+    new_Q = np.clip(new_Q, Q_lo, Q_hi)
+    
+    # Apply to attacked buses
+    idx = np.where(mask)[0]
+    Z[idx, 0] = new_P
+    Z[idx, 1] = new_Q
+        
     """
-    
     # Apply the distribution-based attack on the marked buses
     Z[mask, 0] = np.random.normal(P.mean(), P.std(), size=mask.sum())
     Z[mask, 1] = np.random.normal(Q.mean(), Q.std(), size=mask.sum())
-    
+    """
+
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
   
@@ -565,6 +590,9 @@ def generate_honest(t):
 # # # # # # # # # # # #
 
 if __name__ == '__main__':
+    import multiprocessing as mp
+    mp.set_start_method('spawn', force=True)
+    
     # ! ---- Training set ---- !
     # -- Generate Ao --
     generate_Ao(1, 5761)   
@@ -648,18 +676,15 @@ if __name__ == '__main__':
                 raise RuntimeError(f"Z_{i}.npy doesn't exist ->  dataset is corrupted")
     
         # Compute mean & std
-        sum_   = 0.0
-        sumsq  = 0.0
-        count  = 0
-    
+        sumv = np.zeros(2); sumq = np.zeros(2); count = 0
         for fn in Z_list:
-            arr = np.load(fn)
-            sum_  += arr.sum()
-            sumsq += (arr**2).sum()
-            count += arr.size
-    
-        mean = sum_ / count
-        var  = sumsq / count - mean**2
+            A = np.load(fn)            # shape (n,2) = (P,Q)
+            sumv  += A.sum(axis=0)
+            sumq += (A*A).sum(axis=0)
+            count += A.shape[0]
+        
+        mean = sumv / count
+        var  = sumq / count - mean**2
         std  = np.sqrt(var)
     
         print(f"Training dataset, mean = {mean:.5f},  std = {std:.5f}")
