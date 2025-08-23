@@ -33,9 +33,13 @@ def parse_ids(spec: str):
 
 # -- Global settings --
 PERPLEXITY = 50
-TITLE = "All"
+TITLE = "All with healthy standardization"
 ID_SPEC = "1-34560"
-ID_SPEC_healthy = "11521-23040,25921-28800,31681-34560"
+ID_SPEC_train = "1-23040"
+ID_SPEC_train_Ao = "1-5761, 11512-23041"
+ID_SPEC_train_Ad = "5761-23041"
+ID_SPEC_test_ArAs = "30241-34561"
+
 ID_SPEC_Ao = "1-5760,23041-24480,28801-29520"
 ID_SPEC_Ad = "5761-11520,24481-25920,29521-30240"
 ID_SPEC_As = "30241-30960"
@@ -43,7 +47,7 @@ ID_SPEC_Ar = "30961-31680"
 
 # -- Define the config --
 config = {
-        "dataset_root": "./final_dataset_No_standardization",
+        "dataset_root": "./final_dataset",
     }
 
 # -- Get all Y and X

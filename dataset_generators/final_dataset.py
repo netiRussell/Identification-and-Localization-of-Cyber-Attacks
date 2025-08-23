@@ -593,7 +593,50 @@ if __name__ == '__main__':
     import multiprocessing as mp
     mp.set_start_method('spawn', force=True)
     
+    
     # ! ---- Training set ---- !
+    # -- Generate honest samples (not-attacked) --
+    for t in range(11521, 23041):
+      print(f"\nNot-attacked, Current cycle: #{t}")
+      generate_honest(t)
+      
+    # -- Get per-bus mean and covariance for (P,Q) --
+    # Collect healthy files (your ids 11521..23040)
+    Z_files = []
+    for i in range(11521, 23041):
+        fn = "../init_dataset/Z_{i}.npy"
+        if not os.path.exists(fn):
+            raise RuntimeError(f"{fn} missing")
+        Z_files.append(fn)
+    
+    # Initialize using the first file to get n (buses)
+    A0 = np.load(Z_files[0])              # shape (n, 2) -> (P,Q) per bus
+    n = A0.shape[0]
+    
+    mu_sum = np.zeros((n, 2), dtype=np.float64)      # Σ x
+    xx_sum = np.zeros((n, 2, 2), dtype=np.float64)   # Σ (x x^T)
+    m = 0                                            # number of timesteps
+    
+    for fn in Z_files:
+        A = np.load(fn).astype(np.float64)           # (n,2)
+        mu_sum += A
+        xx_sum += A[:, :, None] * A[:, None, :]      # outer product per bus -> (n,2,2)
+        m += 1
+    
+    # Per-bus mean
+    mu = mu_sum / m                                  # (n,2)
+    
+    # Per-bus covariance
+    # population version:
+    cov_pop = xx_sum / m - mu[:, :, None] * mu[:, None, :]    # (n,2,2)
+    # sample version (recommended):
+    cov_sam = (xx_sum - m * (mu[:, :, None] * mu[:, None, :])) / (m - 1)
+    
+    # Optional: stable inverse for Mahalanobis
+    eps = 1e-6
+    I2 = np.eye(2)[None, :, :]
+    cov_inv = np.linalg.inv(cov_sam + eps * I2)               # (n,2,2)
+      
     # -- Generate Ao --
     generate_Ao(1, 5761)   
     
@@ -601,11 +644,7 @@ if __name__ == '__main__':
     for t in range(5761, 11521):
       print(f"\n: Current cycle: #{t}")
       generate_Ad(t)
-    
-    # -- Generate honest samples (not-attacked) --
-    for t in range(11521, 23041):
-      print(f"\nNot-attacked, Current cycle: #{t}")
-      generate_honest(t)
+
     
     # ! ---- Validation set ---- !
     # -- Generate Ao --
@@ -661,13 +700,14 @@ if __name__ == '__main__':
     for t in range(31681, 34561):
       print(f"\nNot-attacked, Current cycle: #{t}")
       generate_honest(t)
-  
+      
     if( dataset_config["standardize_data"] ):
         # ! ---- Standardization ---- !
         # Load in the training dataset
         root = "../final_dataset"
         Z_list = []
         
+        # Healthy samples only
         for i in range(1, 23041):
             file_path = os.path.join(root, f"Z_{i}.npy")
             if os.path.exists(file_path):  # check if file exists
@@ -687,8 +727,8 @@ if __name__ == '__main__':
         var  = sumq / count - mean**2
         std  = np.sqrt(var)
     
-        print(f"Training dataset, mean = {mean:.5f},  std = {std:.5f}")
-        
+        print(f"Training dataset, mean0 = {mean[0]:.5f}, mean1 = {mean[1]:.5f},  std0 = {std[0]:.5f}, std1 = {std[1]:.5f}")
+
         # Load in all files:
         pattern = os.path.join(root, "Z_*.npy")
         files = glob.glob(pattern)
