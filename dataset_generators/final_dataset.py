@@ -213,9 +213,11 @@ def run_psse(net, z, sigma_n, nodelist):
 
 
 class Attacker_Ao:
-    def __init__(self, Ybus, baseMVA):
+    def __init__(self, Ybus, baseMVA, mu_pq, cov_inv):
         self.Ybus = Ybus
         self.baseMVA = baseMVA
+        self.mu_pq = torch.as_tensor(mu_pq, dtype=torch.float32, device=device) 
+        self.cov_inv = torch.as_tensor(cov_inv, dtype=torch.float32, device=device)
     
 
     def attack(self, z0, x_hat_phasor, V, th, T_z, T_x):
@@ -238,10 +240,6 @@ class Attacker_Ao:
         V = torch.nn.Parameter(torch.from_numpy(V).float().to(device))
         th = torch.nn.Parameter(torch.from_numpy(th).float().to(device))
         
-        # Mask to train only chosen to be attacked nodes:
-        mask_training = torch.zeros_like(V.data)
-        mask_training[T_x] = 1.0
-        
         # Define optimizer and loss
         optimizer = torch.optim.Adam([V, th], lr=ETA)
         loss = None
@@ -250,8 +248,11 @@ class Attacker_Ao:
         attacked = torch.zeros(n, dtype=torch.bool, device=device)
         attacked[T_x] = True
         keep = ~attacked  # non-attacked buses
-
-        den_z = torch.sqrt(keep.sum().float() * 4.0) + 1e-12
+        
+        # Stealth hyperparams
+        EPS_KEEP   = 1e-4        # RMSE threshold on non-attacked
+        BUDGET_REL = 0.03        # 3% cap on |Δ(P,Q)|_∞ at attacked
+        CHI2_CUT   = 11.83       # ~99.7% for df=2 (Mahalanobis gate)
 
         # Minimize loss from L = LAMBDA_Z * Lz - LAMBDA_Z * Lx
         for epoch in range(EPOCHS):
@@ -259,40 +260,25 @@ class Attacker_Ao:
             #   Maximally corrupts the measurements in Tₓ (the attacked nodes),
             #   While keeping the measurements outside Tₓ (i.e. all i∉Tₓ) as close as possible to the originals.
             
-            """
-            # Do I understand and utilize T_z and T_x correctly? I think T_z might not be what I think it is.
-            # Is my measurement_model function correct conceptually?  
-            
-            # How can I make Lz also affect the loss?
-            #   Maybe avoiding the use of pandapower and simply using the formula
-            #   from the paper will help me calculate grds for za => Lz will have effect on the loss
-            
-            # Should I clamp into [0.9,1.1] and [−π,π] every epoch?
-            
-            # Is Lz and Lx calculated as follows: "Then, for each epoch, it obtains za using 
-            #   h(x) and consequently calculates loss term Lz as a root mean
-            #   squared error between za and zo, and Lx as a mean absolute
-            #   error between ˇx and ˆx. Eventually"      
-            
-            """
-            
             optimizer.zero_grad()
         
-            # clamp into [0.9,1.1] and [−π,π]
+            # Clamp into [0.9,1.1] and [−π,π]
             V.data.clamp_(0.9, 1.1)
             th.data.clamp_(-np.pi, np.pi)
         
-            # build phasors and analytic measurements
+            # Build phasors and analytic measurements
             x_complex = V * torch.exp(1j * th)
             za = measurement_model(x_complex, self.Ybus, self.baseMVA)
-        
-            # compute per-paper losses
             z0_mat = z0_t.view(n, 4)   # reshape honest z
-
-            Lz = torch.linalg.vector_norm((za[keep] - z0_mat[keep]).reshape(-1)) / den_z
             
+            # Lz: RMSE on NON-ATTACKED sensors
+            e_keep = za[keep] - z0_mat[keep]
+            Lz = torch.sqrt(torch.mean(e_keep**2) + 1e-12) 
+            
+            # Lx: MAE on ATTACKED states
             Lx = torch.mean(torch.abs(x_complex[attacked] - x_hat_t[attacked]))
             
+            # Total loss
             L = LAMBDA_Z * Lz - LAMBDA_X * Lx
             L.backward()
             
@@ -304,7 +290,29 @@ class Attacker_Ao:
             optimizer.step()
             
             loss = L.item()
-        
+            
+            # Early-stop when stealth criteria already met (does not change objective)
+            with torch.no_grad():
+                Zpq  = za[:, :2]
+                Z0pq = z0_mat[:, :2]
+            
+                eps_rel = 1e-6
+                dz_rel = torch.abs((Zpq - Z0pq)[attacked]) / (torch.abs(Z0pq[attacked]) + eps_rel)
+                budget_ok = (dz_rel.max().item() <= BUDGET_REL)
+            
+                rmse_keep_ok = (Lz.item() < EPS_KEEP)
+            
+                maha_ok = True
+                if (self.mu_pq is not None) and (self.cov_inv is not None):
+                    diff = (Zpq[attacked] - self.mu_pq[attacked])
+                    d2   = torch.einsum('bi,bij,bj->b', diff, self.cov_inv[attacked], diff)
+                    CHI2_CUT = 11.83
+                    maha_ok = bool((d2 <= CHI2_CUT).all())
+            
+                if rmse_keep_ok and budget_ok and maha_ok:
+                    break
+            
+            # Trivial early-stop to follow the paper
             if loss < TAU_LOSS:
                 break
         
@@ -367,7 +375,7 @@ def step_Ao( attacker, z0, x_hat, net, t):
     return z, x_est, y
 
 
-def worker_Ao(t_save, t_load):
+def worker_Ao(t_save, t_load, mu, cov_inv):
     # Generate Ybus and base unit of measurements from the current network
     net = pn.case300()
     pp.runpp(net)                              # just to build net._ppc
@@ -380,7 +388,7 @@ def worker_Ao(t_save, t_load):
     baseMVA = net.sn_mva
 
     # Initialize the attacker with the Ybus and the unit computed
-    attacker = Attacker_Ao(Ybus, baseMVA)
+    attacker = Attacker_Ao(Ybus, baseMVA, mu, cov_inv)
 
     # Input holders
     z0 = np.load(f"../init_dataset/Z_{t_load}.npy")
@@ -413,13 +421,13 @@ def worker_Ao(t_save, t_load):
     return t_save  # for tracking progress
 
 
-def generate_Ao(start_id, finish_id, max_workers=2):
+def generate_Ao(start_id, finish_id, mu, cov_inv, max_workers=2):
     """
     # Un-paralleled generation for debugging
     for t_save in range(start_id, finish_id):
         print("Ao attack chosen")
         t_load = returnTimeStep()
-        worker_Ao(t_save, t_load)
+        worker_Ao(t_save, t_load, mu, cov_inv)
         print(f"Current cycle: #{t_save}")
     """
     
@@ -433,7 +441,7 @@ def generate_Ao(start_id, finish_id, max_workers=2):
     
     with ProcessPoolExecutor(max_workers=max_workers) as exe:
         futures = {
-            exe.submit(worker_Ao, t_save, t_load): t_save
+            exe.submit(worker_Ao, t_save, t_load, mu, cov_inv): t_save
             for (t_save, t_load) in jobs
         }
         for fut in as_completed(futures):
@@ -446,7 +454,7 @@ def generate_Ao(start_id, finish_id, max_workers=2):
                 print(f"[✗] Error on sample {t_save}: {e}")
 
 
-def generate_Ad(t_save):
+def generate_Ad(t_save, mu, cov_sam):
     # Get random timestep, entry bus, and radius of the attack
     t_load = returnTimeStep()
     p = np.random.randint(0, dataset_config["number_nodes"])
@@ -458,46 +466,16 @@ def generate_Ad(t_save):
   
     # - Ad data subset -
     print("Ad attack chosen")
-        
-    # Extract all node features
-    P = Z[:, 0].copy()
-    Q = Z[:, 1].copy()
-    
-    
-    # Don't follow outliners, so that the attack is not as easy to detect
-    # Trim outliers (5–95%)
-    P_lo, P_hi = np.percentile(P, [5, 95])
-    Q_lo, Q_hi = np.percentile(Q, [5, 95])
-    
-    P_trim = P[(P >= P_lo) & (P <= P_hi)]
-    Q_trim = Q[(Q >= Q_lo) & (Q <= Q_hi)]
-    
-    P_mu, P_std = P_trim.mean(), P_trim.std(ddof=0)
-    Q_mu, Q_std = Q_trim.mean(), Q_trim.std(ddof=0)
-    
-    # Avoid zero/NaN std
-    eps = 1e-6
-    P_std = float(max(P_std, eps))
-    Q_std = float(max(Q_std, eps))
-    
-    k = int(mask.sum())
-    new_P = np.random.normal(P_mu, P_std, size=k)
-    new_Q = np.random.normal(Q_mu, Q_std, size=k)
-    
-    # Keep within trimmed bounds
-    new_P = np.clip(new_P, P_lo, P_hi)
-    new_Q = np.clip(new_Q, Q_lo, Q_hi)
-    
-    # Apply to attacked buses
+
     idx = np.where(mask)[0]
-    Z[idx, 0] = new_P
-    Z[idx, 1] = new_Q
-        
-    """
-    # Apply the distribution-based attack on the marked buses
-    Z[mask, 0] = np.random.normal(P.mean(), P.std(), size=mask.sum())
-    Z[mask, 1] = np.random.normal(Q.mean(), Q.std(), size=mask.sum())
-    """
+
+    for b in idx:
+        mu_bP, mu_bQ = mu[b, 0], mu[b, 1]
+        var_bP, var_bQ = cov_sam[b, 0, 0], cov_sam[b, 1, 1]
+        std_bP = np.sqrt(max(var_bP, 1e-12))
+        std_bQ = np.sqrt(max(var_bQ, 1e-12))
+        Z[b, 0] = np.random.normal(mu_bP, std_bP)
+        Z[b, 1] = np.random.normal(mu_bQ, std_bQ)
 
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
@@ -604,13 +582,13 @@ if __name__ == '__main__':
     # Collect healthy files (your ids 11521..23040)
     Z_files = []
     for i in range(11521, 23041):
-        fn = "../init_dataset/Z_{i}.npy"
+        fn = f"../init_dataset/Z_{i}.npy"
         if not os.path.exists(fn):
             raise RuntimeError(f"{fn} missing")
         Z_files.append(fn)
     
     # Initialize using the first file to get n (buses)
-    A0 = np.load(Z_files[0])              # shape (n, 2) -> (P,Q) per bus
+    A0 = np.load(Z_files[0]).astype(np.float64)[:, :2] # shape (n, 2) -> (P,Q) per bus
     n = A0.shape[0]
     
     mu_sum = np.zeros((n, 2), dtype=np.float64)      # Σ x
@@ -618,7 +596,7 @@ if __name__ == '__main__':
     m = 0                                            # number of timesteps
     
     for fn in Z_files:
-        A = np.load(fn).astype(np.float64)           # (n,2)
+        A = np.load(fn).astype(np.float64)[:, :2]            # (n,2)
         mu_sum += A
         xx_sum += A[:, :, None] * A[:, None, :]      # outer product per bus -> (n,2,2)
         m += 1
@@ -627,33 +605,36 @@ if __name__ == '__main__':
     mu = mu_sum / m                                  # (n,2)
     
     # Per-bus covariance
-    # population version:
-    cov_pop = xx_sum / m - mu[:, :, None] * mu[:, None, :]    # (n,2,2)
-    # sample version (recommended):
+    # sample version
     cov_sam = (xx_sum - m * (mu[:, :, None] * mu[:, None, :])) / (m - 1)
     
-    # Optional: stable inverse for Mahalanobis
+    # Stable inverse for Mahalanobis via eigen-floor
     eps = 1e-6
-    I2 = np.eye(2)[None, :, :]
-    cov_inv = np.linalg.inv(cov_sam + eps * I2)               # (n,2,2)
-      
+    cov_inv = np.empty_like(cov_sam)
+    for j in range(n):
+        w, V = np.linalg.eigh(cov_sam[j])
+        w = np.clip(w, eps, None)                   # floor tiny/neg eigenvalues
+        cov_inv[j] = (V * (1.0 / w)) @ V.T
+    
+    print("\nPer-bus covarience and mean have been computed. Starting the Ao generation...")
+    
     # -- Generate Ao --
-    generate_Ao(1, 5761)   
+    generate_Ao(1, 5761, mu, cov_inv)   
     
     # -- Generate Ad --
     for t in range(5761, 11521):
       print(f"\n: Current cycle: #{t}")
-      generate_Ad(t)
+      generate_Ad(t, mu, cov_sam)
 
     
     # ! ---- Validation set ---- !
     # -- Generate Ao --
-    generate_Ao(23041, 24481)   
+    generate_Ao(23041, 24481, mu, cov_inv)   
     
     # -- Generate Ad --
     for t in range(24481, 25921):
       print(f"\n: Current cycle: #{t}")
-      generate_Ad(t)
+      generate_Ad(t, mu, cov_sam)
     
     # -- Generate honest samples (not-attacked) --
     for t in range(25921, 28801):
@@ -662,12 +643,12 @@ if __name__ == '__main__':
     
     # ! ---- Test set ---- !
     # -- Generate Ao --
-    generate_Ao(28801, 29521)
+    generate_Ao(28801, 29521, mu, cov_inv)
     
     # -- Generate Ad --
     for t in range(29521, 30241):
       print(f"\n: Current cycle: #{t}")
-      generate_Ad(t)
+      generate_Ad(t, mu, cov_sam)
     
     # -- Generate As -- 
     for t in range(30241, 30961):
@@ -708,7 +689,7 @@ if __name__ == '__main__':
         Z_list = []
         
         # Healthy samples only
-        for i in range(1, 23041):
+        for i in range(11521, 23041):
             file_path = os.path.join(root, f"Z_{i}.npy")
             if os.path.exists(file_path):  # check if file exists
                 Z_list.append(file_path)
