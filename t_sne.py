@@ -31,9 +31,9 @@ def parse_ids(spec: str):
             out.append(int(part))
     return sorted(set(out))
 
-# -- Global settings --
+# -- Global settings -- 
 PERPLEXITY = 50
-TITLE = "All with healthy standardization"
+TITLE = "Ad, updated"
 ID_SPEC = "1-34560"
 ID_SPEC_train = "1-23040"
 ID_SPEC_train_Ao = "1-5761, 11512-23041"
@@ -88,8 +88,8 @@ with threadpool_limits(limits=4):
 print(f"Y TSNE shape: {Y_embedded.shape}")
 
 # -- Get an array of corresponding colors --
-labels = (Y.sum(axis=1) > 0).astype(int)
-colors = ['green' if (sample.sum() > 0).astype(int) else 'black' for sample in labels]
+labels = (Y.sum(axis=1) > 0)               # bools
+colors = ['green' if lab else 'black' for lab in labels]
 
 # -- Visualize Y --
 plt.figure(figsize=(8, 8))
