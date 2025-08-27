@@ -29,13 +29,13 @@ torch.cuda.manual_seed(123)
 np.random.seed(123)
 
 
-def saveNetwork( Z, target, i):
+def saveNetwork( X, target, i):
   """
   Saves the network into a Ad(or As)_dataset folder
 
   Parameters:
   ----------
-  Z : NumPy array filled with float values
+  X : NumPy array filled with float values
     Node features array
     
   target: a NumPy array filled with integers
@@ -49,7 +49,7 @@ def saveNetwork( Z, target, i):
   -------
     None
   """
-  np.save(f"../final_dataset/Z_{i}", Z)
+  np.save(f"../final_dataset/X_{i}", X)
   np.save(f"../final_dataset/target_{i}", target)
 
 

@@ -29,41 +29,6 @@ Logic for non-sequential attacks:
     Save to the "final_dataset" folder is sequential.
 """
 
-
-
-"""
-
-TODOs:
-    - Stats without standardization:
-    - Stats with standardization:
-    - Stats with cyclic lr:
-    
-    - Try not to standardize(copy the unstandardized data aside, train on the standardized one and then on the regular)
-    - I think generators are skipped to be attacked but are still marked as attacked in the generated targets
-        Check on Ao
-        Check on regular attacks
-    
-    - Make sure that target matches the attacked nodes
-    - Confirm Ao is implemented correctly. To do so, go over the notes in attacker and the paper
-    
-    - (warm‐up + cosine decay) for scheduler
-    - Figure out why the gradients blow up so much
-    - No layer norm for ARMA?
-    
-    
-    - Multiple random restarts of attack() if loss > TAU_LOSS
-    - Lz might not affect the loss because measurement_model is not differentiable
-    
-    - Make sure that there is no NaN in ARMATransformer. Perhaps this is one
-        of the reasons why my models don't fully converge
-        I added to the ARMA tranformer model:
-            if torch.isnan(x).any() or torch.isnan(weights).any():
-            print("Found NaN in inputs")
-        I added to the Arma transformer training:
-            torch.autograd.set_detect_anomaly(True)
-    - Figure out the best lr for ARMA with optuna
-"""
-
 # # # # # # # # # # # # # #  #
 # ---- Global variables ---- #
 # # # # # # # # # # # # # #  #
@@ -86,6 +51,9 @@ timesteps_left = list(range(1, dataset_config["max_timesteps"]))
 random.shuffle(timesteps_left)
 
 def returnTimeStep():
+    if( len(timesteps_left) == 0 ):
+        raise ValueError("ALL THE TIMESTEPS HAVE BEEN USED")
+    
     return timesteps_left.pop()
     
     
@@ -125,10 +93,10 @@ EPOCHS = 1000         # number of attack optimization epochs
 TAU_FREQ = 1.0        # attack frequency threshold
 TAU_LOSS = 0.1        # attack quality (loss) threshold
 R_MIN = 6             # minimum attack radius for IEEE300
-R_MAZ = 8             # maximum attack radius for IEEE300
+R_MAX = 8             # maximum attack radius for IEEE300
 SENSOR_SIGMA = 0.01   # match the sigma used in the init_dataset
+TAU_OUTLINER = 21      # minimal loss to be considered a well generated sample
 device = selectDevice()
-
 
 
 # # # # # # # # # # # #
@@ -197,6 +165,7 @@ def run_psse(net, z, sigma_n, nodelist):
         )
     except Exception as e:
         print(f"[ERROR!]: The estimation didn't converge! {e}")
+        return None
 
     # Build estimated feature matrix    
     cols = ["p_mw", "q_mvar", "vm_pu", "va_degree"]
@@ -316,6 +285,12 @@ class Attacker_Ao:
             if loss < TAU_LOSS:
                 break
         
+        # Outliner gate
+        if( loss > TAU_OUTLINER ):
+            print(f"Current sample is an outliner. Loss: {loss}")
+            
+            return None, None
+        
         # Compute complex state variable
         x_c_opt = V * torch.exp(1j * th)
         #x_c_opt = (V * torch.exp(1j*th)).detach().cpu()
@@ -336,25 +311,21 @@ def step_Ao( attacker, z0, x_hat, net, t):
     
     # Info required for an attack
     p = np.random.randint(0, x_hat.shape[0])
-    r = np.random.randint(R_MIN, R_MAZ+1)
+    r = np.random.randint(R_MIN, R_MAX+1)
     T_z, T_x = bfs_attack_surface(net, p, r)
     
     # Attack attempt
     z, loss = attacker.attack(z0, x_hat_phasor, V, th, T_z, T_x)
+    if( loss is None ):
+        return None, None, None
+    
     # — build a length-n vector of 0/1 labels —
     y = np.zeros_like(x_hat_phasor, dtype=int)
-    y[T_x] = 1 # TODO: ! make sure the target is correct
+    y[T_x] = 1
     
-    """
-    print(loss)
-    if loss > TAU_LOSS:
-        # TODO: implement attack rerun
-        print(f"[WARNING]: Sample #{t} didn't go below TAU_LOSS by {loss - TAU_LOSS}")
-    """
-    
-    """
-    # Copy the net
-    net_copy = copy.deepcopy(net)
+    # Add 1% relative uniform noise to match the other FDIAs 
+    # (init_dataset adds noise to Z and other FDIAs reuse Z but Ao doesn't) 
+    z = np.random.normal(loc=z, scale=abs(z * SENSOR_SIGMA))
     
     # Build a nodelist matching the order of your z vector
     # IEEE300: it's just [0,1,2,…,299]
@@ -364,13 +335,17 @@ def step_Ao( attacker, z0, x_hat, net, t):
     z_mat = z.reshape((len(x_hat_phasor), 4))
 
     # call your existing helper
-    x_est = run_psse(net_copy, z_mat, SIGMA_N, nodelist)
+    x_est = run_psse(net, z_mat, SENSOR_SIGMA, nodelist)
     
     # run_psse returns None if it didn’t converge
-    if x_est is None:
-        print("[WARNING]: PSSE didn't converge!")
-    """
-    x_est = None
+    if( x_est is None ):
+        return None, None, None
+    
+    # Exclude Voltage magnitude and angle from the measruments
+    z = z[:, :2]
+    
+    # Exclude Voltage magnitude and angle from the estimated state
+    x_est = x_est[:, :2]
         
     return z, x_est, y
 
@@ -399,22 +374,17 @@ def worker_Ao(t_save, t_load, mu, cov_inv):
     
     # Compute Z and X
     z_att, x_est, y = step_Ao(attacker, z0, x_hat, net, t_save)
-    
-    # Exclude Voltage magnitude and angle
-    z_att = z_att[:, :2]
-    
-    # Add noise to match the other FDIAs 
-    # (init_dataset adds noise to Z and other FDIAs reuse Z but Ao doesn't) 
-    z_att += np.random.normal(0.0, np.abs(z_att)*SENSOR_SIGMA, size=z_att.shape)
+    if( y is None ):
+        return None
     
     
     # Save current attacked sample
     np.save(f'../final_dataset/Z_{t_save}.npy', z_att)
         
     # Estimeated X
-    #np.save(f'../final_dataset/X_{t_save}.npy', x_est)
+    np.save(f'../final_dataset/X_{t_save}.npy', x_est)
     
-        # Attach "attacked" graph-level flag to the target
+    # Attach "attacked" graph-level flag to the target
     y = np.concatenate([y, [1]])
     np.save(f'../final_dataset/target_{t_save}.npy', y)
     
@@ -422,15 +392,29 @@ def worker_Ao(t_save, t_load, mu, cov_inv):
 
 
 def generate_Ao(start_id, finish_id, mu, cov_inv, max_workers=2):
-    """
+    
     # Un-paralleled generation for debugging
     for t_save in range(start_id, finish_id):
         print("Ao attack chosen")
-        t_load = returnTimeStep()
-        worker_Ao(t_save, t_load, mu, cov_inv)
+        
+        tobe_appended = list()
+        status = None
+        while( status is None ):
+            print(f"Skipped {len(tobe_appended)} sample(s) already")
+            t_load = returnTimeStep()
+            tobe_appended.append(t_load)
+            status = worker_Ao(t_save, t_load, mu, cov_inv)
+        
+        # Append the rejected timesteps back
+        if(len(tobe_appended) > 1):
+            tobe_appended.pop() # last timestep was utilized
+            
+            global timesteps_left
+            timesteps_left.extend(tobe_appended)
         print(f"Current cycle: #{t_save}")
-    """
     
+        
+    """ # TODO: fix incompatibility with the outliner gate
     # Prepare timesteps for the parallel execution
     # ( in order to avoid undefined behavior )
     jobs = []
@@ -452,13 +436,13 @@ def generate_Ao(start_id, finish_id, mu, cov_inv, max_workers=2):
                 print(f"Current cycle: #{t_save}")
             except Exception as e:
                 print(f"[✗] Error on sample {t_save}: {e}")
-
+    """
 
 def generate_Ad(t_save, mu, cov_sam):
     # Get random timestep, entry bus, and radius of the attack
     t_load = returnTimeStep()
     p = np.random.randint(0, dataset_config["number_nodes"])
-    r = np.random.randint(R_MIN, R_MAZ+1)
+    r = np.random.randint(R_MIN, R_MAX+1)
     
     # Load a node features and a mask with the buses to be attacked marked as True
     Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
@@ -491,7 +475,7 @@ def generate_As(t_save):
     # Get random timestep, entry bus, and radius of the attack
     t_load = returnTimeStep()
     p = np.random.randint(0, dataset_config["number_nodes"])
-    r = np.random.randint(R_MIN, R_MAZ+1)
+    r = np.random.randint(R_MIN, R_MAX+1)
     
     # Load a node features and a mask with the buses to be attacked marked as True
     Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
@@ -517,7 +501,7 @@ def generate_As(t_save):
 def generate_Ar(tau, t_save, t_load):
     # Get random entry bus, and radius of the attack
     p = np.random.randint(0, dataset_config["number_nodes"])
-    r = np.random.randint(R_MIN, R_MAZ+1)
+    r = np.random.randint(R_MIN, R_MAX+1)
     
     # Load a node features and a mask with the buses to be attacked marked as True
     Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
@@ -571,12 +555,11 @@ if __name__ == '__main__':
     import multiprocessing as mp
     mp.set_start_method('spawn', force=True)
     
-    
     # ! ---- Training set ---- !
     # -- Generate honest samples (not-attacked) --
     for t in range(11521, 23041):
       print(f"\nNot-attacked, Current cycle: #{t}")
-      generate_honest(t)
+      generate_honest(t)  
       
     # -- Get per-bus mean and covariance for (P,Q) --
     # Collect healthy files (your ids 11521..23040)
@@ -618,7 +601,7 @@ if __name__ == '__main__':
     
     print("\nPer-bus covarience and mean have been computed. Starting the Ao generation...")
     
-    # -- Generate Ao --
+    # -- Generate Ao --    
     generate_Ao(1, 5761, mu, cov_inv)   
     
     # -- Generate Ad --
