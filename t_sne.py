@@ -33,7 +33,7 @@ def parse_ids(spec: str):
 
 # -- Global settings -- 
 PERPLEXITY = 50
-TITLE = "Ad, updated"
+TITLE = "All"
 ID_SPEC = "1-34560"
 ID_SPEC_train = "1-23040"
 ID_SPEC_train_Ao = "1-5761, 11512-23041"
@@ -54,7 +54,7 @@ config = {
 root = Path(config["dataset_root"])
 extract = lambda p, pref: int(re.search(rf"{pref}_(\d+)\.npy$", p.name).group(1))
 
-Z_map = {extract(p, "Z"): p for p in root.glob("Z_*.npy")}
+Z_map = {extract(p, "X"): p for p in root.glob("X_*.npy")}
 T_map = {extract(p, "target"): p for p in root.glob("target_*.npy")}
 
 ids = [i for i in parse_ids(ID_SPEC) if i in Z_map and i in T_map]

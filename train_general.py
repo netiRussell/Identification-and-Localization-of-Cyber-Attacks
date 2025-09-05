@@ -56,7 +56,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 3,
+              "model_selected": 2,
                   #0 = CGCN
                   #1 = ARMA
                   #2 = ARMA-Transformer

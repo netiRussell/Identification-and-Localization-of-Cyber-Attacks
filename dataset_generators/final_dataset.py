@@ -95,7 +95,7 @@ TAU_LOSS = 0.1        # attack quality (loss) threshold
 R_MIN = 6             # minimum attack radius for IEEE300
 R_MAX = 8             # maximum attack radius for IEEE300
 SENSOR_SIGMA = 0.01   # match the sigma used in the init_dataset
-TAU_OUTLINER = 21      # minimal loss to be considered a well generated sample
+TAU_OUTLINER = 13      # minimal loss to be considered a well generated sample
 device = selectDevice()
 
 
@@ -554,7 +554,7 @@ def generate_honest(t):
 if __name__ == '__main__':
     import multiprocessing as mp
     mp.set_start_method('spawn', force=True)
-    
+    """
     # ! ---- Training set ---- !
     # -- Generate honest samples (not-attacked) --
     for t in range(11521, 23041):
@@ -601,8 +601,14 @@ if __name__ == '__main__':
     
     print("\nPer-bus covarience and mean have been computed. Starting the Ao generation...")
     
-    # -- Generate Ao --    
-    generate_Ao(1, 5761, mu, cov_inv)   
+    # -- Generate Ao (Train) --    
+    generate_Ao(1, 5761, mu, cov_inv) 
+    
+    # -- Generate Ao (Validation) --
+    generate_Ao(23041, 24481, mu, cov_inv)  
+    
+    # -- Generate Ao (Test)--
+    generate_Ao(28801, 29521, mu, cov_inv)
     
     # -- Generate Ad --
     for t in range(5761, 11521):
@@ -611,8 +617,6 @@ if __name__ == '__main__':
 
     
     # ! ---- Validation set ---- !
-    # -- Generate Ao --
-    generate_Ao(23041, 24481, mu, cov_inv)   
     
     # -- Generate Ad --
     for t in range(24481, 25921):
@@ -625,8 +629,6 @@ if __name__ == '__main__':
       generate_honest(t)
     
     # ! ---- Test set ---- !
-    # -- Generate Ao --
-    generate_Ao(28801, 29521, mu, cov_inv)
     
     # -- Generate Ad --
     for t in range(29521, 30241):
@@ -664,7 +666,7 @@ if __name__ == '__main__':
     for t in range(31681, 34561):
       print(f"\nNot-attacked, Current cycle: #{t}")
       generate_honest(t)
-      
+      """
     if( dataset_config["standardize_data"] ):
         # ! ---- Standardization ---- !
         # Load in the training dataset
@@ -673,11 +675,11 @@ if __name__ == '__main__':
         
         # Healthy samples only
         for i in range(11521, 23041):
-            file_path = os.path.join(root, f"Z_{i}.npy")
+            file_path = os.path.join(root, f"X_{i}.npy")
             if os.path.exists(file_path):  # check if file exists
                 Z_list.append(file_path)
             else:
-                raise RuntimeError(f"Z_{i}.npy doesn't exist ->  dataset is corrupted")
+                raise RuntimeError(f"X_{i}.npy doesn't exist ->  dataset is corrupted")
     
         # Compute mean & std
         sumv = np.zeros(2); sumq = np.zeros(2); count = 0
@@ -694,7 +696,7 @@ if __name__ == '__main__':
         print(f"Training dataset, mean0 = {mean[0]:.5f}, mean1 = {mean[1]:.5f},  std0 = {std[0]:.5f}, std1 = {std[1]:.5f}")
 
         # Load in all files:
-        pattern = os.path.join(root, "Z_*.npy")
+        pattern = os.path.join(root, "X_*.npy")
         files = glob.glob(pattern)
     
         # Standardize each file

@@ -78,5 +78,5 @@ def outlier_threshold(losses,
 if __name__ == "__main__":
     losses = np.load("./loss.npy")
     
-    thr, keep, out, cleaned, info = outlier_threshold(losses, method="percentile")
+    thr, keep, out, cleaned, info = outlier_threshold(losses, method="iqr")
     print(f"Chosen: {info['chosen_method']}, threshold={info['threshold']:.4f}, outliers={out.sum()} ({info['outlier_fraction']*100:.2f}%)")
