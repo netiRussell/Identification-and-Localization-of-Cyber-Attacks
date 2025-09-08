@@ -69,7 +69,7 @@ tsneY = TSNE(
     perplexity=PERPLEXITY,
     learning_rate=200,
     early_exaggeration=5,
-    n_iter=1500,
+    n_iter=1000,
     init='pca',
 )
 
