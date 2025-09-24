@@ -554,7 +554,7 @@ def generate_honest(t):
 if __name__ == '__main__':
     import multiprocessing as mp
     mp.set_start_method('spawn', force=True)
-    """
+    
     # ! ---- Training set ---- !
     # -- Generate honest samples (not-attacked) --
     for t in range(11521, 23041):
@@ -666,7 +666,7 @@ if __name__ == '__main__':
     for t in range(31681, 34561):
       print(f"\nNot-attacked, Current cycle: #{t}")
       generate_honest(t)
-      """
+      
     if( dataset_config["standardize_data"] ):
         # ! ---- Standardization ---- !
         # Load in the training dataset

@@ -56,7 +56,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 0,
+              "model_selected": 2,
                   #0 = CGCN
                   #1 = ARMA
                   #2 = ARMA-Transformer
@@ -65,15 +65,15 @@ config = {
                   #5 = LSTM
               
               "cgcn_specific": {
-                  "lr": 1e-4, 
-                  "weight_decay": 0,
+                  "lr": 1e-3, 
+                  "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_CGCN_layers": 3,
-                  "u": 64, # hidden channels
+                  "u": 96, # hidden channels
                   "Ks": 4,
-                  "dropout": 0.5,
-                  "pos_weight": 4.5,
+                  "dropout": 0.3,
+                  "pos_weight": 3,
                   },
               
               "arma_specific": {
@@ -81,12 +81,12 @@ config = {
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
-                  "num_ARMA_layers": 3,
-                  "hidden_channels": 32,
+                  "num_ARMA_layers": 3, # TODO: TRY CHANGING THESE FOUR
+                  "hidden_channels": 64, # TODO: TRY CHANGING THESE FOUR
                   "num_stacks": 3,  # K
-                  "num_layers": 5,
-                  "dropout": 0.4,
-                  "pos_weight": 6,
+                  "num_layers": 5, # TODO: TRY CHANGING THESE FOUR
+                  "dropout": 0.2,
+                  "pos_weight": 1.5,
                   },
               
               "transformer_specific": {
@@ -103,7 +103,7 @@ config = {
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
                   "dropout": 0.2, 
-                  "pos_weight": 6,
+                  "pos_weight": 9,
                   },
               
               "cnn_specific": {
@@ -367,7 +367,7 @@ def validate(valid_loader):
     # Holder for graph DR, FA, F1 computation
     # [0][sample] = predictions
     # [1][sample] = targets
-    det_metrics_holder = np.zeros( (2, n_elem_metrices), dtype="np.uint8" )
+    det_metrics_holder = np.zeros( (2, n_elem_metrices), dtype="int" )
     
     # Make sure grads of the model won't be affected
     with torch.no_grad():
@@ -460,7 +460,7 @@ def validate(valid_loader):
                 
                 # Compute a strict match
                 if( np.array_equal(pred_nodes, target_nodes) ):
-                    print("+1 Strict match")
+                    #print("+1 Strict match")
                     localization_accuracy += 1
             
             # Increment the amount of samples >= 95%
@@ -471,8 +471,8 @@ def validate(valid_loader):
                 F1_5_SW += 1
             
             # TO BE DELETED:
-            print(f"Attack: {target_graph}/{graph_pred}, Current F1: {temp_F1_SW:.2f}, Num of buses with f1 > 95%: {F1_95_SW}")
-            print(f"Number of ones exptected: {target_nodes.sum()}, predicted: {pred_nodes.sum()}\n")         
+            #print(f"Attack: {target_graph}/{graph_pred}, Current F1: {temp_F1_SW:.2f}, Num of buses with f1 > 95%: {F1_95_SW}")
+            #print(f"Number of ones exptected: {target_nodes.sum()}, predicted: {pred_nodes.sum()}\n")         
         
         
         # Node-Wise (NW) evaluation:
@@ -482,32 +482,42 @@ def validate(valid_loader):
             FN = np.logical_and(nw_metrics_holder[bus_id][0] == 0, nw_metrics_holder[bus_id][1] == 1).sum()
             TP = np.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 1).sum()
             
-            # Compute Recall(DR)
-            if((TP+FN) == 0):
-                recall_NW = 0
+            # Check if there was no attack on this bus 
+            # and the model predicted everything correctly
+            if( TP == 0 and FN == 0  ):
+                if( FP == 0 ):
+                    F1_95_NW += 1 # +1 perfect case
+                else:
+                    F1_5_NW += 1 # +1 worst case
+                    
+            # Otherwise, this bus has been attacked at some point
             else:
-                recall_NW = TP / (TP+FN)
-            
-            # Compute Precision
-            prec_denom = (TP+FP)
-            if( prec_denom == 0 ):
-                precision_NW = 0
-            else:
-                precision_NW = TP / prec_denom
-            
-            # Compute F1 of the current sample
-            if(precision_NW == 0 or recall_NW == 0):
-                temp_F1_NW = 0
-            else:
-                temp_F1_NW = 2*((precision_NW*recall_NW)/(precision_NW+recall_NW))
-            
-            
-            # Increment the amount of samples >= 95%
-            if(temp_F1_NW >= 0.95):
-                F1_95_NW += 1
-            # Increment the amount of samples <= 5%
-            elif(temp_F1_NW <= 0.05):
-                F1_5_NW += 1
+                # Compute Recall(DR)
+                if((TP+FN) == 0):
+                    recall_NW = 0
+                else:
+                    recall_NW = TP / (TP+FN)
+                
+                # Compute Precision
+                prec_denom = (TP+FP)
+                if( prec_denom == 0 ):
+                    precision_NW = 0
+                else:
+                    precision_NW = TP / prec_denom
+                
+                # Compute F1 of the current sample
+                if(precision_NW == 0 or recall_NW == 0):
+                    temp_F1_NW = 0
+                else:
+                    temp_F1_NW = 2*((precision_NW*recall_NW)/(precision_NW+recall_NW))
+                
+                
+                # Increment the amount of samples >= 95%
+                if(temp_F1_NW >= 0.95):
+                    F1_95_NW += 1
+                # Increment the amount of samples <= 5%
+                elif(temp_F1_NW <= 0.05):
+                    F1_5_NW += 1
             
             
         # Graph detection evaluation

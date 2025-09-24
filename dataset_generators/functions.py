@@ -287,8 +287,8 @@ def preparePyGDataset(config, FDIADataset):
     test_dataset = FDIADataset(test_indices, config["dataset_root"])
 
     # Define loaders for each data subset to sequentially load batches
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, pin_memory=True)
-    valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, pin_memory=True )
+    valid_loader   = DataLoader(val_dataset, batch_size=1, shuffle=False, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # Get input features (Size of X in the first dimension)
