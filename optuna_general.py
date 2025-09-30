@@ -37,7 +37,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 1,
+              "model_selected": 0,
                   #0 = CGCN
                   #1 = ARMA
                   #2 = ARMA-Transformer
@@ -472,6 +472,12 @@ def objective(trial):
             weight_decay = config["arma_specific"]["weight_decay"]
         elif( config["model_selected"] == 2 ):
             weight_decay = config["transformer_specific"]["weight_decay"]
+        elif( config["model_selected"] == 3 ):
+            weight_decay = config["cnn_specific"]["weight_decay"]
+        elif( config["model_selected"] == 4 ):
+            weight_decay = config["mlp_specific"]["weight_decay"]
+        elif( config["model_selected"] == 5 ):
+            weight_decay = config["lstm_specific"]["weight_decay"]
         else:
             raise IndexError("Incorrect model ID selected")
         
@@ -494,10 +500,10 @@ def objective(trial):
             hyperparams["pos_weight"] = trial.suggest_float("pos_weight", 1, 4)
             
             # Generate hidden features
-            hyperparams["num_CGCN_layers"] = trial.suggest_categorical("num_CGCN_layers", [3, 4, 5])
+            hyperparams["num_CGCN_layers"] = trial.suggest_categorical("num_CGCN_layers", [3, 4])
             
             # Generate number of stacks
-            hyperparams["u"] = trial.suggest_categorical("u", [8, 16, 32, 64])
+            hyperparams["u"] = trial.suggest_categorical("u", [16, 32, 64, 96, 128])
             
             # Generate number of layers
             hyperparams["Ks"] = trial.suggest_categorical("Ks", [3, 5, 7])
@@ -610,58 +616,56 @@ def objective(trial):
         
         # Training&Validating of the model.
         for epoch in range(config["num_epochs"]):
+            print(f"\n\nCurrent trial: {trial.number}")  
+            print(f"Epoch {epoch}")
             
             train_loss = train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler)
             
-            # Conduct a validation for a single epoch
-            det_rec, det_FA, det_f1, f1_95_sw, f1_5_sw, f1_95_nw, f1_5_nw, loc_acc, det_acc, avg_loss = validate(model, valid_loader, criterion)
-            
-            # Append all the metrics from the validation
-            loc_accuracies_arr.append(loc_acc)
-            det_accuracies_arr.append(det_acc)
-            f1_arr.append(f1_95_sw)
-            rec_arr.append(det_rec)
-            fa_arr.append(det_FA)
-            
-            # Check how much time have passed since the beginning of the model training
-            # and print out the information of the epoch
-            print(f"\n\nCurrent trial: {trial.number}")  
-            print(f"\nEpoch {epoch}")
-            print(f"Avg Train Loss={train_loss:.4f}, Avg Validation Loss: {avg_loss:.4f},")
-            print(f"Detection DR: {det_rec:.4f}, Detection FA: {det_FA:.4f}, Detection F1: {det_f1:.4f}")
-            print(f"SW F1>=95: {f1_95_sw:.4f}, SW F1<=5: {f1_5_sw:.4f}")
-            print(f"NW F1>=95: {f1_95_nw:.4f}, NW F1<=5: {f1_5_nw:.4f}")
-            print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
-            
-            best_loc = max(loc_accuracies_arr)
-            best_det = max(det_accuracies_arr)
-            best_f1 = max(f1_arr)
-            print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, Best detection={best_det*100:.2f} at epoch#{det_accuracies_arr.index(best_det)}")
-            print(f"Best f1: {best_f1:.3f} at epoch#{f1_arr.index(best_f1)}")
-            print("----------------------------------------------------\n\n")
-            
-            
-            print("\n🔧 Trial Hyperparameters:")
-            for key, value in hyperparams.items():
-                print(f"\t• {key}: {value:.6f}")
-            print("----------------------------------------------------\n\n")
-    
-            trial.report(f1_95_nw, epoch)
-            
-            # Early pruning
-            if best_loss - avg_loss >= 1e-4:
-                best_loss = avg_loss
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= 16:
-                    print(f"Early pruning: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
-                    raise optuna.exceptions.TrialPruned()
-    
-            # Handle pruning based on the intermediate value.
-            if trial.should_prune():
-                raise optuna.exceptions.TrialPruned()
+            if epoch % 2 != 0:
+                # Conduct a validation for a single epoch
+                det_rec, det_FA, det_f1, f1_95_sw, f1_5_sw, f1_95_nw, f1_5_nw, loc_acc, det_acc, avg_loss = validate(model, valid_loader, criterion)
                 
+                # Append all the metrics from the validation
+                loc_accuracies_arr.append(loc_acc)
+                det_accuracies_arr.append(det_acc)
+                f1_arr.append(f1_95_sw)
+                rec_arr.append(det_rec)
+                fa_arr.append(det_FA)
+                
+                # Check how much time have passed since the beginning of the model training
+                # and print out the information of the epoch
+                print(f"Avg Train Loss={train_loss:.4f}, Avg Validation Loss: {avg_loss:.4f},")
+                print(f"Detection DR: {det_rec:.4f}, Detection FA: {det_FA:.4f}, Detection F1: {det_f1:.4f}")
+                print(f"SW F1>=95: {f1_95_sw:.4f}, SW F1<=5: {f1_5_sw:.4f}")
+                print(f"NW F1>=95: {f1_95_nw:.4f}, NW F1<=5: {f1_5_nw:.4f}")
+                print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
+                
+                best_loc = max(loc_accuracies_arr)
+                best_det = max(det_accuracies_arr)
+                best_f1 = max(f1_arr)
+                print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, Best detection={best_det*100:.2f} at epoch#{det_accuracies_arr.index(best_det)}")
+                print(f"Best f1: {best_f1:.3f} at epoch#{f1_arr.index(best_f1)}")
+                print("----------------------------------------------------")
+                print("🔧 Trial Hyperparameters:")
+                for key, value in hyperparams.items():
+                    print(f"\t• {key}: {value:.6f}")
+                print("----------------------------------------------------\n\n")
+        
+                trial.report(f1_95_nw, epoch)
+                
+                # Handle pruning based on the intermediate value.
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
+            
+                # Early pruning that avoid overfitting
+                if best_loss - avg_loss >= 1e-4:
+                    best_loss = avg_loss
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= 8:
+                        print(f"Early pruning: no Validation loss improvement for 16 epochs. Best loss: {best_loss:.4f}")
+                        raise optuna.exceptions.TrialPruned()
     
         return f1_95_nw
     
@@ -676,7 +680,7 @@ def objective(trial):
 # # # # # # # # # # # # # # # # # #
 
 # Model-specific values:
-study_name = "study8"+config["study_name"]+"_"+datetime.now().strftime("%m_%d_%y")
+study_name = "study"+config["study_name"]+"_"+datetime.now().strftime("%m_%d_%y")
 
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
 storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
