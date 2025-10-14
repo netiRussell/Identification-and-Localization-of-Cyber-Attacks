@@ -37,7 +37,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 0,
+              "model_selected": 4,
                   #0 = CGCN
                   #1 = ARMA
                   #2 = ARMA-Transformer
@@ -269,6 +269,13 @@ def validate(model, valid_loader, criterion):
     with torch.no_grad():
         for current_sample_id, sample in enumerate(valid_loader):
             sample = sample.to(device)
+            
+            """
+            Sticking to tensors:
+                - Make sure the output of model(logits_nodes, logits_graph) is a tensor
+                - Delete any redundant tensor transformation since everything is already in tensors
+                - NumPy...
+            """
 
             # Get model's raw output(logits)
             logits_nodes, logits_graph = model(
@@ -678,25 +685,35 @@ def objective(trial):
 # # # # # # # # # # # # # # # # # #
 # ---- Hyperparameter tuning ---- #
 # # # # # # # # # # # # # # # # # #
+resume = True
 
-# Model-specific values:
-study_name = "study"+config["study_name"]+"_"+datetime.now().strftime("%m_%d_%y")
-
-optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
-
+if( resume ):
+    # Hyper-tuning values:
+    study_name = "studyCGCN_09_25_25"
+    
+    optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
+    storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
+    
+else:
+    # Hyper-tuning specific values:
+    study_name = "study"+config["study_name"]+"_"+datetime.now().strftime("%m_%d_%y")
+    
+    optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
+    storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
+    
 # Study definition
 study = optuna.create_study(
                             direction="maximize", 
                             sampler=TPESampler(multivariate=True, group=True, n_startup_trials=20),
                             pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5),
                             study_name=study_name,
-                            storage=storage_name
+                            storage=storage_name,
+                            load_if_exists=True
                             )
 
 # Study with aggressive sampling
-study.optimize(objective, n_trials=150, timeout=None)
-
+study.optimize(objective, n_trials=200, timeout=None)
+    
 """ In case you want to mix samplers in a single tuning run
 # Studying with fine sampling
 study.sampler = TPESampler(multivariate=True);

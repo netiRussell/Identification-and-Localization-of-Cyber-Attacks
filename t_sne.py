@@ -34,11 +34,12 @@ def parse_ids(spec: str):
 # -- Global settings -- 
 PERPLEXITY = 50
 TITLE = "All"
-ID_SPEC = "1-34560"
+ID_SPEC_all = "1-34560"
 ID_SPEC_train = "1-23040"
 ID_SPEC_train_Ao = "1-5761, 11512-23041"
 ID_SPEC_train_Ad = "5761-23041"
 ID_SPEC_test_ArAs = "30241-34561"
+ID_SPEC = "28801-34561"
 
 ID_SPEC_Ao = "1-5760,23041-24480,28801-29520"
 ID_SPEC_Ad = "5761-11520,24481-25920,29521-30240"

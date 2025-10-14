@@ -94,12 +94,17 @@ class GNNArmaTransformer(nn.Module):
         # Safe parameters to be reused later
         self.num_nodes = num_nodes
         
+        # Projecting to d_model
+        self.project_to_hidden = nn.Linear(in_channels, hidden_channels)
+        
         # Positional Encoder with learnable parameters
-        self.node_pos_embed = nn.Embedding(num_nodes, in_channels)
+        self.node_pos_embed = nn.Embedding(num_nodes, hidden_channels)
         nn.init.normal_(self.node_pos_embed.weight, std=0.02) 
         
+        self.pre_arma_dropout = nn.Dropout(dropout)
+        
         # ARMA
-        self.gnn_arma = GNNArma(in_channels, num_ARMA_layers, hidden_channels, d_model_channels, num_stacks, num_layers, dropout, leakyRelu_rate)
+        self.gnn_arma = GNNArma(hidden_channels, num_ARMA_layers, hidden_channels, d_model_channels, num_stacks, num_layers, dropout, leakyRelu_rate)
         
         """
         # Positional Encoder
@@ -136,9 +141,17 @@ class GNNArmaTransformer(nn.Module):
         # Get the batch size
         current_batchSize = int(batch.max().item()) + 1
         
-        # Positional Encoder
-        node_ids = torch.arange(self.num_nodes, device=x.device).repeat(current_batchSize)  # <<< ADDED
+        # Create a sequence for the Positional Encoder
+        node_ids = torch.arange(self.num_nodes, device=x.device).repeat(current_batchSize)
+        
+        # Project the node features to hidden_channels(d_model in the paper)
+        x = self.project_to_hidden(x)
+        
+        # PE with Residual Connection for stability
         x = x + self.node_pos_embed(node_ids)
+        
+        # Pre ARMAConv Dropout
+        x = self.pre_arma_dropout(x)
         
         # ARMA layers
         h = self.gnn_arma(x, edge_index, weights)
