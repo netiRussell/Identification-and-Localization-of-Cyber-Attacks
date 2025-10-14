@@ -10,10 +10,14 @@ from torch_geometric.loader import DataLoader
 import pandapower.topology as pptop
 import networkx as nx
 
+
 from model.ARMA import GNNArma
 from model.ARMA_Transformer import GNNArmaTransformer
 from model.CGCN import CGCN
 from model.CNN import CNN
+from model.MLP import MLP
+from model.LSTM import LSTM
+
 
 # TODO: To be deleted
 import sys
@@ -25,13 +29,13 @@ torch.cuda.manual_seed(123)
 np.random.seed(123)
 
 
-def saveNetwork( Z, target, i):
+def saveNetwork( X, target, i):
   """
   Saves the network into a Ad(or As)_dataset folder
 
   Parameters:
   ----------
-  Z : NumPy array filled with float values
+  X : NumPy array filled with float values
     Node features array
     
   target: a NumPy array filled with integers
@@ -45,7 +49,7 @@ def saveNetwork( Z, target, i):
   -------
     None
   """
-  np.save(f"../final_dataset/Z_{i}", Z)
+  np.save(f"../final_dataset/X_{i}", X)
   np.save(f"../final_dataset/target_{i}", target)
 
 
@@ -82,16 +86,20 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
     T_x: list of integers
         List of nodes to be attacked
     """
-    lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
-    attacked_buses = list(lengths.keys())
+    T_x = list()
     
-    # Filter out the 0-injection and generator buses
-    T_x = [b for b in attacked_buses if b not in irrelevant_buses]
+    # Make sure the number of attacked buses are always >= 5
+    while(len(T_x) < 5):
+        lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
+        attacked_buses = list(lengths.keys())
+    
+        # Filter out the 0-injection and generator buses (otherwise => easy to detect)
+        T_x = [b for b in attacked_buses if b not in irrelevant_buses]
     
     # Create an empty mask
     mask = np.full(number_nodes, False, dtype="bool")
     
-    # Fill the mask with the buses to be attacked (otherwise => easy to detect)
+    # Fill the mask with the buses to be attacked
     mask[T_x] = True
     
     # Z = Node features array
@@ -279,8 +287,8 @@ def preparePyGDataset(config, FDIADataset):
     test_dataset = FDIADataset(test_indices, config["dataset_root"])
 
     # Define loaders for each data subset to sequentially load batches
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, pin_memory=True)
-    valid_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, pin_memory=True )
+    valid_loader   = DataLoader(val_dataset, batch_size=1, shuffle=False, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # Get input features (Size of X in the first dimension)
@@ -459,6 +467,47 @@ def define_modelCNN(hyperparams, config):
             num_nodes=config["num_nodes"]
         )
     
+    return model
+
+def define_modelMLP(hyperparams, config):
+    if hyperparams == None:
+        model = MLP(
+            in_channels=config["in_channels"], 
+            num_MLP_layers=config["mlp_specific"]["num_MLP_layers"],
+            units=config["mlp_specific"]["units"],
+            dropout=config["mlp_specific"]["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    else:
+        # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, num_stacks, num_layers
+        model = MLP(
+            in_channels=config["in_channels"], 
+            num_MLP_layers=hyperparams["num_MLP_layers"],
+            units=hyperparams["units"],
+            dropout=hyperparams["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    
+    return model
+
+def define_modelLSTM(hyperparams, config):
+    if hyperparams == None:
+        model = LSTM(
+            in_channels=config["in_channels"], 
+            num_LSTM_layers=config["lstm_specific"]["num_LSTM_layers"],
+            units=config["lstm_specific"]["units"],
+            dropout=config["lstm_specific"]["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+    else:
+        model = LSTM(
+            in_channels=config["in_channels"], 
+            num_LSTM_layers=hyperparams["num_LSTM_layers"],
+            units=hyperparams["units"],
+            dropout=hyperparams["dropout"],
+            num_nodes=config["num_nodes"]
+        )
+        
     return model
 
 # # # # # # # # # # # # # # # #

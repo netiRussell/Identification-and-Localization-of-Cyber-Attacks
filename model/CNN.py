@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn 
-from torch.nn import Conv1d, Linear
+from torch.nn import Conv1d, Linear, GroupNorm
 import torch.nn.functional as F
 from torch_geometric.utils import to_dense_batch
 
@@ -17,18 +17,17 @@ class CNN(nn.Module):
         self.in_channels = in_channels
         self.num_nodes = num_nodes
         
-        # ARMA convolutional graph layers (Dynamic definition)
+        # CNN layers (Dynamic definition)
         self.CNNconvs = nn.ModuleList()
         for index in range(num_CNN_layers):
             in_channels = in_channels if index == 0 else units
             self.CNNconvs.append( Conv1d(in_channels, units,
                                   kernel_size=Ks, padding=padding) )
         
-        # Layer Normalizations
-        self.layerNorms = nn.ModuleList()
+        # Group Normalizations
+        self.groupNorms = nn.ModuleList()
         for index in range(num_CNN_layers // 2):
-            u = 1 if (index+1)*2 == num_CNN_layers else units
-            self.layerNorms.append( nn.LayerNorm(u) )
+            self.groupNorms.append( GroupNorm(int(units/8), units) )
         
         # Dropouts
         self.dropouts = nn.ModuleList()
@@ -46,14 +45,14 @@ class CNN(nn.Module):
         # For Conv1d, go to [B, C, N]
         x = x.permute(0, 2, 1).contiguous()
         
-        # Dynamically go over each ArmaConv with layerNorm added after every 2nd ArmaConv
+        # Dynamically go over each CNN with layerNorm added after every 2nd CNN
         for idx, CNNLayer in enumerate(self.CNNconvs):
             x = CNNLayer(x)
             
-            """
+            
             if (idx+1) % 2 == 0:
-                x = self.layerNorms[idx//2](x) # every 2nd iteration has this layer
-            """
+                x = self.groupNorms[idx//2](x) # every 2nd iteration has this layer
+            
             
             x = F.relu(x)
             x = self.dropouts[idx](x)

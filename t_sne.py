@@ -31,11 +31,16 @@ def parse_ids(spec: str):
             out.append(int(part))
     return sorted(set(out))
 
-# -- Global settings --
+# -- Global settings -- 
 PERPLEXITY = 50
 TITLE = "All"
-ID_SPEC = "1-34560"
-ID_SPEC_healthy = "11521-23040,25921-28800,31681-34560"
+ID_SPEC_all = "1-34560"
+ID_SPEC_train = "1-23040"
+ID_SPEC_train_Ao = "1-5761, 11512-23041"
+ID_SPEC_train_Ad = "5761-23041"
+ID_SPEC_test_ArAs = "30241-34561"
+ID_SPEC = "28801-34561"
+
 ID_SPEC_Ao = "1-5760,23041-24480,28801-29520"
 ID_SPEC_Ad = "5761-11520,24481-25920,29521-30240"
 ID_SPEC_As = "30241-30960"
@@ -43,14 +48,14 @@ ID_SPEC_Ar = "30961-31680"
 
 # -- Define the config --
 config = {
-        "dataset_root": "./final_dataset_No_standardization",
+        "dataset_root": "./final_dataset",
     }
 
 # -- Get all Y and X
 root = Path(config["dataset_root"])
 extract = lambda p, pref: int(re.search(rf"{pref}_(\d+)\.npy$", p.name).group(1))
 
-Z_map = {extract(p, "Z"): p for p in root.glob("Z_*.npy")}
+Z_map = {extract(p, "X"): p for p in root.glob("X_*.npy")}
 T_map = {extract(p, "target"): p for p in root.glob("target_*.npy")}
 
 ids = [i for i in parse_ids(ID_SPEC) if i in Z_map and i in T_map]
@@ -65,7 +70,7 @@ tsneY = TSNE(
     perplexity=PERPLEXITY,
     learning_rate=200,
     early_exaggeration=5,
-    n_iter=1500,
+    n_iter=1000,
     init='pca',
 )
 
@@ -84,8 +89,8 @@ with threadpool_limits(limits=4):
 print(f"Y TSNE shape: {Y_embedded.shape}")
 
 # -- Get an array of corresponding colors --
-labels = (Y.sum(axis=1) > 0).astype(int)
-colors = ['green' if (sample.sum() > 0).astype(int) else 'black' for sample in labels]
+labels = (Y.sum(axis=1) > 0)               # bools
+colors = ['green' if lab else 'black' for lab in labels]
 
 # -- Visualize Y --
 plt.figure(figsize=(8, 8))
