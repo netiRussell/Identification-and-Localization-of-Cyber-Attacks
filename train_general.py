@@ -35,9 +35,6 @@ torch.cuda.manual_seed(123)
 np.random.seed(123)
 
 '''
-Questions:
-...
-
 Input: edge_indices, weights, node features
 Output: 2848 boolean values where False means no attack on the bus and Trues means the bus has been attacked
 '''
@@ -58,7 +55,7 @@ config = {
               
               "model_selected": 2,
                   #0 = CGCN
-                  #1 = ARMA
+                  #1 = ARMAConv
                   #2 = ARMA-Transformer
                   #3 = CNN
                   #4 = MLP
@@ -278,7 +275,7 @@ def train_epoch(epoch):
     model.train()
     
     # Declare default value for loss and # of batches(steps) for grad accumulation
-    total_loss = 0
+    total_loss = torch.zeros(()).to(device)
     accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
     
     # Reset accumulated grads
@@ -290,7 +287,7 @@ def train_epoch(epoch):
         with autocast(device_type=device.type, enabled=use_cuda):
             # Get targets for the batch
             target_nodes = minibatch.y
-            #target_graph = minibatch.y_graph
+            target_graph = minibatch.y_graph
             
             # Get model's raw output (logits)
             logits_nodes, logits_graph = model(minibatch.x, 
@@ -300,7 +297,7 @@ def train_epoch(epoch):
             
             # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            #loss += (criterion(logits_graph, target_graph.squeeze(0)))
+            loss += (criterion(logits_graph, target_graph.squeeze(0)))
             total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
@@ -334,15 +331,15 @@ def train_epoch(epoch):
         scheduler.step()
         optimizer.zero_grad()
         
-    return total_loss / len(train_loader)
+    return (total_loss / len(train_loader)).item()
 
 
-def validate(valid_loader):
+def validate(valid_loader):    
     # Turn on the evaluation mode to exclude features like dropout regularizatiion
     model.eval()
     
     # Keep track of loss for early stopping
-    total_loss = 0
+    total_loss = torch.zeros(()).to(device)
     
     # Declare holders for metrics
     det_FA = 0
@@ -364,15 +361,15 @@ def validate(valid_loader):
     # Holder for NW evaluation
     # [bus_id][0][sample] = predictions
     # [bus_id][1][sample] = targets
-    nw_metrics_holder = np.zeros((config["num_nodes"], 2, n_elem_metrices), dtype="float")
+    nw_metrics_holder = torch.zeros( (config["num_nodes"], 2, n_elem_metrices), dtype=torch.float ).to(device)
     
     # Holder for graph DR, FA, F1 computation
     # [0][sample] = predictions
     # [1][sample] = targets
-    det_metrics_holder = np.zeros( (2, n_elem_metrices), dtype="int" )
+    det_metrics_holder = torch.zeros( (2, n_elem_metrices), dtype=torch.long ).to(device)
     
     # Make sure grads of the model won't be affected
-    with torch.no_grad():
+    with torch.inference_mode():
         for current_sample_id, sample in enumerate(valid_loader):
             sample = sample.to(device)
 
@@ -394,23 +391,19 @@ def validate(valid_loader):
             # Compute loss
             loss = criterion(logits_nodes, target_nodes)
             #loss += criterion(logits_graph, target_graph)
-            total_loss += loss.item()
+            total_loss += loss
             
             # Apply activation function on the logits to get node-level probability
             # and convert it into a classification
             pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
             
             # Get graph-level classification and the correspoding target
-            graph_pred   = int((torch.sigmoid(logits_graph) >= 0.5).item())
-            target_graph = int(sample.y_graph.squeeze(0).item())
+            graph_pred   = (torch.sigmoid(logits_graph) >= 0.5).long()
+            target_graph = (sample.y_graph.squeeze(0)).long()
             
             # Save the information for the future detection evaluation
             det_metrics_holder[0, current_sample_id] = graph_pred
             det_metrics_holder[1, current_sample_id] = target_graph
-            
-            # Turn tensors into NumPy arrays
-            pred_nodes = pred_nodes.cpu().numpy()
-            target_nodes = target_nodes.cpu().numpy()
             
             # Save the information for the future NW evaluation
             nw_metrics_holder[:, 0, current_sample_id ] = pred_nodes
@@ -426,7 +419,7 @@ def validate(valid_loader):
                 # - No attack case -
                 
                 # If prediction is 100% correct (all nodes = 0 since no attack)
-                if(np.sum(pred_nodes) == 0):
+                if(torch.sum(pred_nodes) == 0):
                     temp_F1_SW = 1.0
                     localization_accuracy += 1
                     
@@ -436,9 +429,9 @@ def validate(valid_loader):
             else:
                 # - Attack took place case -
                 # Compute predictions
-                FP = np.logical_and(pred_nodes == 1, target_nodes == 0).sum()
-                FN = np.logical_and(pred_nodes == 0, target_nodes == 1).sum()
-                TP = np.logical_and(pred_nodes == 1, target_nodes == 1).sum()
+                FP = torch.logical_and(pred_nodes == 1, target_nodes == 0).sum()
+                FN = torch.logical_and(pred_nodes == 0, target_nodes == 1).sum()
+                TP = torch.logical_and(pred_nodes == 1, target_nodes == 1).sum()
                 
                 # Compute Recall(DR)
                 if((TP+FN) == 0):
@@ -459,9 +452,8 @@ def validate(valid_loader):
                 else:
                     temp_F1_SW = 2*((precision_SW*recall_SW)/(precision_SW+recall_SW))
                 
-                
                 # Compute a strict match
-                if( np.array_equal(pred_nodes, target_nodes) ):
+                if( torch.equal(pred_nodes, target_nodes) ):
                     #print("+1 Strict match")
                     localization_accuracy += 1
             
@@ -480,9 +472,9 @@ def validate(valid_loader):
         # Node-Wise (NW) evaluation:
         for bus_id in range( config["num_nodes"] ):      
             # Compute predictions
-            FP = np.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 0).sum()
-            FN = np.logical_and(nw_metrics_holder[bus_id][0] == 0, nw_metrics_holder[bus_id][1] == 1).sum()
-            TP = np.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 1).sum()
+            FP = torch.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 0).sum()
+            FN = torch.logical_and(nw_metrics_holder[bus_id][0] == 0, nw_metrics_holder[bus_id][1] == 1).sum()
+            TP = torch.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 1).sum()
             
             # Check if there was no attack on this bus 
             # and the model predicted everything correctly
@@ -524,10 +516,10 @@ def validate(valid_loader):
             
         # Graph detection evaluation
         # Compute predictions
-        FP = np.logical_and(det_metrics_holder[0] == 1, det_metrics_holder[1] == 0).sum()
-        FN = np.logical_and(det_metrics_holder[0] == 0, det_metrics_holder[1] == 1).sum()
-        TP = np.logical_and(det_metrics_holder[0] == 1, det_metrics_holder[1] == 1).sum()
-        TN = np.logical_and(det_metrics_holder[0] == 0, det_metrics_holder[1] == 0).sum()
+        FP = torch.logical_and(det_metrics_holder[0] == 1, det_metrics_holder[1] == 0).sum()
+        FN = torch.logical_and(det_metrics_holder[0] == 0, det_metrics_holder[1] == 1).sum()
+        TP = torch.logical_and(det_metrics_holder[0] == 1, det_metrics_holder[1] == 1).sum()
+        TN = torch.logical_and(det_metrics_holder[0] == 0, det_metrics_holder[1] == 0).sum()
         
         # Compute FA
         if( (FP + TN) == 0 ):
@@ -554,7 +546,10 @@ def validate(valid_loader):
         else:
             det_F1 = 2*((det_precision*det_recall)/(det_precision+det_recall))
         
-        return  det_recall, det_FA, det_F1, F1_95_SW/n_elem_metrices, F1_5_SW/n_elem_metrices, F1_95_NW/config["num_nodes"], F1_5_NW/config["num_nodes"], localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices,  total_loss/n_elem_metrices
+        return  (det_recall, det_FA, det_F1, 
+                 F1_95_SW/n_elem_metrices, F1_5_SW/n_elem_metrices, F1_95_NW/config["num_nodes"], F1_5_NW/config["num_nodes"], 
+                 localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices,  
+                 (total_loss/n_elem_metrices).item())
 
 
 # # # # # # # # # # # # # # # # # # #
