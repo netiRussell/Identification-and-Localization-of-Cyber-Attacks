@@ -90,6 +90,7 @@ config = {
                   },
               
               "transformer_specific": {
+                  # TODO: make the dim_feedforward parameter adjustable from here
                   "lr": 1e-3, 
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
@@ -99,6 +100,7 @@ config = {
                   "num_stacks": 3,  # K
                   "num_layers": 5,
                   "d_model_channels": 256, # channels of a transformer-encoder
+                  "dim_feedforward": 1024, # Feed Forward dimensions, best = 512
                   "transformer_heads": 4,
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
@@ -298,7 +300,7 @@ def train_epoch(epoch):
             
             # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            #loss += criterion(logits_graph, target_graph.squeeze(0))
+            #loss += (criterion(logits_graph, target_graph.squeeze(0)))
             total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps

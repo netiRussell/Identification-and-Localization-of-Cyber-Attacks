@@ -86,7 +86,7 @@ class GNNArmaTransformer(nn.Module):
     Combines the GNN ARMA encoder with a vanilla Transformer encoder
     and a classification head.
     """
-    def __init__(self, in_channels, num_ARMA_layers, hidden_channels, d_model_channels, num_stacks=3, 
+    def __init__(self, in_channels, num_ARMA_layers, hidden_channels, d_model_channels, dim_feedforward, num_stacks=3, 
                  num_layers=2, transformer_heads=4, transformer_layers=2,
                  dropout=0.3, num_nodes=300, leakyRelu_rate=0.1):
         super(GNNArmaTransformer, self).__init__()
@@ -118,7 +118,7 @@ class GNNArmaTransformer(nn.Module):
             d_model=d_model_channels,
             dropout=dropout,
             nhead=transformer_heads,
-            dim_feedforward=128,
+            dim_feedforward=dim_feedforward,
             batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(

@@ -1,3 +1,13 @@
+"""
+TO MAKE OPTUNA MORE EFFICIENT:
+    EXCLUDE NUMPY->TENSOR->NUMPY TRANSFORMATIONS, STICK TO TENSOR
+    
+    GO OVER VALIDATIO AND TRAINING TO OMIT THINGS LIKE:
+        CALCULATING THE PRESENSE OF SPIKE AND THE GRADS IN THE TRAINING LOOP INSTEAD OF JUST CLIPPING AND THAT IS IT
+"""
+
+
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -37,7 +47,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 4,
+              "model_selected": 1,
                   #0 = CGCN
                   #1 = ARMA
                   #2 = ARMA-Transformer
@@ -71,6 +81,7 @@ config = {
                   },
               
               "transformer_specific": {
+                  # TODO: make the dim_feedforward parameter adjustable from here
                   "lr": 1e-3, 
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
@@ -80,6 +91,7 @@ config = {
                   "num_stacks": 3,  # K
                   "num_layers": 5,
                   "d_model_channels": 256, # channels of a transformer-encoder
+                  "dim_feedforward": 1024, # Feed Forward dimensions
                   "transformer_heads": 4,
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
@@ -202,7 +214,7 @@ def train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler):
         with autocast(device_type=device.type, enabled=use_cuda):
             # Get targets for the batch
             target_nodes = minibatch.y
-            target_graph = minibatch.y_graph
+            #target_graph = minibatch.y_graph
             
             # Get model's raw output (logits)
             logits_nodes, logits_graph = model(minibatch.x, 
@@ -212,7 +224,7 @@ def train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler):
             
             # Compute loss and save it
             loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += (criterion(logits_graph, target_graph.squeeze(0)))
+            #loss += (criterion(logits_graph, target_graph.squeeze(0)))
             total_loss += (loss.item()/accum_steps)
 
         # Scale down the loss so that the grads are averaged over accum_steps
@@ -509,10 +521,10 @@ def objective(trial):
             # Generate hidden features
             hyperparams["num_CGCN_layers"] = trial.suggest_categorical("num_CGCN_layers", [3, 4])
             
-            # Generate number of stacks
+            # Generate number of layers
             hyperparams["u"] = trial.suggest_categorical("u", [16, 32, 64, 96, 128])
             
-            # Generate number of layers
+            # Generate number of stacks
             hyperparams["Ks"] = trial.suggest_categorical("Ks", [3, 5, 7])
             
             # Model
@@ -689,7 +701,7 @@ resume = True
 
 if( resume ):
     # Hyper-tuning values:
-    study_name = "studyCGCN_09_25_25"
+    study_name = "study12ARMA_09_24_25"
     
     optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
     storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
