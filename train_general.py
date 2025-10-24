@@ -9,7 +9,6 @@ import gc
 import time
 import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
-from torch.nn.utils import clip_grad_norm_
 from torch_geometric.utils import to_dense_batch
 from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 
@@ -17,6 +16,7 @@ from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 from dataset import FDIADataset
 from dataset_generators.functions import save_checkpoint, preparePyGDataset, selectDevice
 from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer, define_modelCNN, define_modelMLP, define_modelLSTM
+from dataset_generators.functions import train_epoch, validate
 
 # TODO: delete at the final stage
 import sys
@@ -97,7 +97,7 @@ config = {
                   "num_stacks": 3,  # K
                   "num_layers": 5,
                   "d_model_channels": 256, # channels of a transformer-encoder
-                  "dim_feedforward": 1024, # Feed Forward dimensions, best = 512
+                  "dim_feedforward": 512, # Feed Forward dimensions
                   "transformer_heads": 4,
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
@@ -151,6 +151,10 @@ train_loader, valid_loader, _, in_feats = preparePyGDataset(config, FDIADataset)
 # -- Instantiate model, loss, optimizer, scheduler --
 # - Select device -
 device = selectDevice()
+
+# - Scaler and Autocast -
+use_amp = (device.type == 'cuda')  # or make it a config flag
+scaler = GradScaler(enabled=use_amp)
 
 # - Define the model and model-specific hyperparameters -
 model = None
@@ -229,19 +233,21 @@ def lr_lambda(current_step: int):
     return 1.0  # keep base_lr after warm-up
 
 
+# Computing steps per epoch
+steps_per_epoch = (len(train_loader) + (config["accumulated_batch_size"] - 1)) // config["accumulated_batch_size"]
+
 # Linear scheduler for a warmup
 scheduler1 = LambdaLR(optimizer, lr_lambda)
 
-# Compute T_max for  CosineAnnealingLR
-steps_per_epoch = int(np.ceil(config["num_train_samples"] / config["accumulated_batch_size"]))
-total_steps = steps_per_epoch * config["num_epochs"]
-T_max = max(1, total_steps - n_lrWarmup_steps)
-
 # Cosine drop in learning rate all the way to nearly 0 at the last epoch
-scheduler2 = CosineAnnealingLR(optimizer, T_max=T_max)
+scheduler2 = CosineAnnealingLR(
+    optimizer, T_max=steps_per_epoch * config["num_epochs"] - n_lrWarmup_steps
+)
 
 # Combination of the two schedulers
-scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[n_lrWarmup_steps])
+scheduler = SequentialLR(
+    optimizer, schedulers=[scheduler1, scheduler2], milestones=[n_lrWarmup_steps]
+)
 
 
 #scheduler = CosineAnnealingLR(optimizer, T_max=90*6) # every 6 epochs (90 batches=steps per epoch)
@@ -257,299 +263,6 @@ plt.plot(range(len(lr_arr)), flat_lr_arr )
 plt.show()
 sys.exit()
 """
-
-# Scaler and Autocast 
-# (seems to have negative impact on the training; hence, turned off)
-#use_cuda = (device.type == 'cuda')
-#scaler = GradScaler(enabled=use_cuda)
-use_cuda = False
-scaler = GradScaler(enabled=False)
-
-
-# -- Training & evaluation functions --
-def train_epoch(epoch):
-    # TO BE DELETED
-    gradSpike = False
-    
-    # Turn on the training mode to include features like GraphNorm normalization
-    model.train()
-    
-    # Declare default value for loss and # of batches(steps) for grad accumulation
-    total_loss = torch.zeros(()).to(device)
-    accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
-    
-    # Reset accumulated grads
-    optimizer.zero_grad()
-    
-    for minibatch_id, minibatch in enumerate(train_loader):
-        minibatch = minibatch.to(device)
-        
-        with autocast(device_type=device.type, enabled=use_cuda):
-            # Get targets for the batch
-            target_nodes = minibatch.y
-            target_graph = minibatch.y_graph
-            
-            # Get model's raw output (logits)
-            logits_nodes, logits_graph = model(minibatch.x, 
-                           minibatch.edge_index, 
-                           weights=minibatch.edge_attr,
-                           batch=minibatch.batch)
-            
-            # Compute loss and save it
-            loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += (criterion(logits_graph, target_graph.squeeze(0)))
-            total_loss += (loss.item()/accum_steps)
-
-        # Scale down the loss so that the grads are averaged over accum_steps
-        scaler.scale(loss / accum_steps).backward()
-        
-        # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
-        if (minibatch_id+1) % accum_steps == 0:
-            # Clip gradients so their total L2 norm ≤ 1
-            total_norm = clip_grad_norm_(model.parameters(), max_norm=10.0)
-            if(total_norm > 10):
-                gradSpike = True
-            print(f"Grad norm before clipping: {total_norm:.4f}. Presence of spike: {gradSpike}")
-            
-            # Applying grads
-            print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}\n")
-            scaler.step(optimizer)
-            scheduler.step()
-            scaler.update()
-            optimizer.zero_grad()
-    
-    # Extra gradient step to make sure there are no leftovers
-    if (minibatch_id + 1) % accum_steps != 0:
-        # Clip gradients so their total L2 norm ≤ 1
-        total_norm = clip_grad_norm_(model.parameters(), max_norm=1.0)
-        print(f"Grad norm before clipping: {total_norm:.4f}")
-        
-        # Applying grads
-        print(f"Epoch#{epoch}, Last batch\n")
-        scaler.step(optimizer)
-        scaler.update()
-        scheduler.step()
-        optimizer.zero_grad()
-        
-    return (total_loss / len(train_loader)).item()
-
-
-def validate(valid_loader):    
-    # Turn on the evaluation mode to exclude features like dropout regularizatiion
-    model.eval()
-    
-    # Keep track of loss for early stopping
-    total_loss = torch.zeros(()).to(device)
-    
-    # Declare holders for metrics
-    det_FA = 0
-    det_recall = 0
-    det_F1 = 0
-    
-    F1_95_SW = 0
-    F1_5_SW = 0
-    
-    F1_95_NW = 0
-    F1_5_NW = 0
-    
-    localization_accuracy = 0
-    detection_accuracy = 0
-    
-    # Number of elements in metrices (total # of samples)
-    n_elem_metrices = len(valid_loader)
-    
-    # Holder for NW evaluation
-    # [bus_id][0][sample] = predictions
-    # [bus_id][1][sample] = targets
-    nw_metrics_holder = torch.zeros( (config["num_nodes"], 2, n_elem_metrices), dtype=torch.float ).to(device)
-    
-    # Holder for graph DR, FA, F1 computation
-    # [0][sample] = predictions
-    # [1][sample] = targets
-    det_metrics_holder = torch.zeros( (2, n_elem_metrices), dtype=torch.long ).to(device)
-    
-    # Make sure grads of the model won't be affected
-    with torch.inference_mode():
-        for current_sample_id, sample in enumerate(valid_loader):
-            sample = sample.to(device)
-
-            # Get model's raw output(logits)
-            logits_nodes, logits_graph = model(
-                sample.x,
-                sample.edge_index,
-                weights = sample.edge_attr,
-                batch = sample.batch
-            )
-            
-            # Change dimensions of the graph output to work with batch=1 case
-            logits_graph = logits_graph.squeeze(0)
-            logits_nodes = logits_nodes.squeeze(0)
-            
-            # Get node targets for the batch of size 1
-            target_nodes = sample.y
-            
-            # Compute loss
-            loss = criterion(logits_nodes, target_nodes)
-            #loss += criterion(logits_graph, target_graph)
-            total_loss += loss
-            
-            # Apply activation function on the logits to get node-level probability
-            # and convert it into a classification
-            pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
-            
-            # Get graph-level classification and the correspoding target
-            graph_pred   = (torch.sigmoid(logits_graph) >= 0.5).long()
-            target_graph = (sample.y_graph.squeeze(0)).long()
-            
-            # Save the information for the future detection evaluation
-            det_metrics_holder[0, current_sample_id] = graph_pred
-            det_metrics_holder[1, current_sample_id] = target_graph
-            
-            # Save the information for the future NW evaluation
-            nw_metrics_holder[:, 0, current_sample_id ] = pred_nodes
-            nw_metrics_holder[:, 1, current_sample_id ] = target_nodes          
-            
-            # Calculate current metrics 
-            # Graph-level
-            if( target_graph == graph_pred):
-                detection_accuracy += 1
-            
-            # Node-level (SW evaluation)
-            if( target_graph == 0 ):
-                # - No attack case -
-                
-                # If prediction is 100% correct (all nodes = 0 since no attack)
-                if(torch.sum(pred_nodes) == 0):
-                    temp_F1_SW = 1.0
-                    localization_accuracy += 1
-                    
-                # If at least 1 node is a mismatch (has a value of 1)    
-                else:
-                    temp_F1_SW = 0.0
-            else:
-                # - Attack took place case -
-                # Compute predictions
-                FP = torch.logical_and(pred_nodes == 1, target_nodes == 0).sum()
-                FN = torch.logical_and(pred_nodes == 0, target_nodes == 1).sum()
-                TP = torch.logical_and(pred_nodes == 1, target_nodes == 1).sum()
-                
-                # Compute Recall(DR)
-                if((TP+FN) == 0):
-                    recall_SW = 0
-                else:
-                    recall_SW = TP / (TP+FN)
-                
-                # Compute Precision
-                prec_denom = (TP+FP)
-                if( prec_denom == 0 ):
-                    precision_SW = 0
-                else:
-                    precision_SW = TP / prec_denom
-                
-                # Compute F1 of the current sample
-                if(precision_SW == 0 or recall_SW == 0):
-                    temp_F1_SW = 0
-                else:
-                    temp_F1_SW = 2*((precision_SW*recall_SW)/(precision_SW+recall_SW))
-                
-                # Compute a strict match
-                if( torch.equal(pred_nodes, target_nodes) ):
-                    #print("+1 Strict match")
-                    localization_accuracy += 1
-            
-            # Increment the amount of samples >= 95%
-            if(temp_F1_SW >= 0.95):
-                F1_95_SW += 1
-            # Increment the amount of samples <= 5%
-            elif(temp_F1_SW <= 0.05):
-                F1_5_SW += 1
-            
-            # TO BE DELETED:
-            #print(f"Attack: {target_graph}/{graph_pred}, Current F1: {temp_F1_SW:.2f}, Num of buses with f1 > 95%: {F1_95_SW}")
-            #print(f"Number of ones exptected: {target_nodes.sum()}, predicted: {pred_nodes.sum()}\n")         
-        
-        
-        # Node-Wise (NW) evaluation:
-        for bus_id in range( config["num_nodes"] ):      
-            # Compute predictions
-            FP = torch.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 0).sum()
-            FN = torch.logical_and(nw_metrics_holder[bus_id][0] == 0, nw_metrics_holder[bus_id][1] == 1).sum()
-            TP = torch.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 1).sum()
-            
-            # Check if there was no attack on this bus 
-            # and the model predicted everything correctly
-            if( TP == 0 and FN == 0  ):
-                if( FP == 0 ):
-                    F1_95_NW += 1 # +1 perfect case
-                else:
-                    F1_5_NW += 1 # +1 worst case
-                    
-            # Otherwise, this bus has been attacked at some point
-            else:
-                # Compute Recall(DR)
-                if((TP+FN) == 0):
-                    recall_NW = 0
-                else:
-                    recall_NW = TP / (TP+FN)
-                
-                # Compute Precision
-                prec_denom = (TP+FP)
-                if( prec_denom == 0 ):
-                    precision_NW = 0
-                else:
-                    precision_NW = TP / prec_denom
-                
-                # Compute F1 of the current sample
-                if(precision_NW == 0 or recall_NW == 0):
-                    temp_F1_NW = 0
-                else:
-                    temp_F1_NW = 2*((precision_NW*recall_NW)/(precision_NW+recall_NW))
-                
-                
-                # Increment the amount of samples >= 95%
-                if(temp_F1_NW >= 0.95):
-                    F1_95_NW += 1
-                # Increment the amount of samples <= 5%
-                elif(temp_F1_NW <= 0.05):
-                    F1_5_NW += 1
-            
-            
-        # Graph detection evaluation
-        # Compute predictions
-        FP = torch.logical_and(det_metrics_holder[0] == 1, det_metrics_holder[1] == 0).sum()
-        FN = torch.logical_and(det_metrics_holder[0] == 0, det_metrics_holder[1] == 1).sum()
-        TP = torch.logical_and(det_metrics_holder[0] == 1, det_metrics_holder[1] == 1).sum()
-        TN = torch.logical_and(det_metrics_holder[0] == 0, det_metrics_holder[1] == 0).sum()
-        
-        # Compute FA
-        if( (FP + TN) == 0 ):
-            det_FA = 0
-        else:
-            det_FA = FP / (FP + TN)
-        
-        # Compute Recall(DR)
-        if( (TP+FN) == 0 ):
-            det_recall = 0
-        else:
-            det_recall = TP / (TP+FN)
-        
-        # Compute Precision
-        prec_denom = (TP+FP)
-        if( prec_denom == 0 ):
-            det_precision = 0
-        else:
-            det_precision = TP / prec_denom
-        
-        # Compute F1 of the current sample
-        if(det_precision == 0 or det_recall == 0):
-            det_F1 = 0
-        else:
-            det_F1 = 2*((det_precision*det_recall)/(det_precision+det_recall))
-        
-        return  (det_recall, det_FA, det_F1, 
-                 F1_95_SW/n_elem_metrices, F1_5_SW/n_elem_metrices, F1_95_NW/config["num_nodes"], F1_5_NW/config["num_nodes"], 
-                 localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices,  
-                 (total_loss/n_elem_metrices).item())
 
 
 # # # # # # # # # # # # # # # # # # #
@@ -585,10 +298,10 @@ else:
 
 for epoch in range(1, config["num_epochs"] + 1):
     # Conduct a training for a single epoch
-    train_loss = train_epoch(epoch)
+    train_loss = train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler, config, device, autocast, use_amp, scaler)
     
     # Conduct a validation for a single epoch
-    det_rec, det_FA, det_f1, f1_95_sw, f1_5_sw, f1_95_nw, f1_5_nw, loc_acc, det_acc, avg_loss = validate(valid_loader)
+    det_rec, det_FA, det_f1, f1_95_sw, f1_5_sw, f1_95_nw, f1_5_nw, loc_acc, det_acc, avg_loss = validate(model, valid_loader, criterion, config, device)
     
     # Append all the metrics from the validation
     loc_accuracies_arr.append(loc_acc)
