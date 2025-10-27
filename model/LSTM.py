@@ -27,7 +27,7 @@ class LSTM(nn.Module):
         self.layerNorm = nn.LayerNorm(units)
         
         # Dropout
-        self.dropout = nn.Dropout(units)
+        self.dropout = nn.Dropout(dropout)
         
         # Classifier
         self.classifier = nn.Linear(units, 1)
@@ -35,10 +35,10 @@ class LSTM(nn.Module):
 
     def forward(self, x, edge_index, weights, batch):
         # from [total_nodes, u] → [batch_size, num_nodes, u]
-        x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
+        x, mask = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
         
         # LSTM main logic
-        x = self.lstm(x)
+        x, _ = self.lstm(x)
         x = self.layerNorm(x)
         x = self.dropout(x)
 
@@ -47,8 +47,8 @@ class LSTM(nn.Module):
         if not torch.isfinite(logits_nodes).all():
             raise ValueError("Classifier output NaNs/Infs")
         
-        # Classification logits per graph (Identifying an attack)
-        logits_graph = logits_nodes.max(dim=1).values # choose max one
+        # Classification logits per graph (Identifying an attack): max over valid nodes only (mask padded nodes)
+        logits_graph = logits_nodes.masked_fill(~mask, float('-inf')).max(dim=1).values
         
         return logits_nodes, logits_graph
     

@@ -48,7 +48,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 0,
+              "model_selected": 5,
                   #0 = CGCN
                   #1 = ARMAConv
                   #2 = ARMA-Transformer
@@ -56,10 +56,11 @@ config = {
                   #4 = MLP
                   #5 = LSTM
                   
-              "optuna_study_name": "studyCGCN_09_25_25",
+              "optuna_study_name": "studyLSTM_10_27_25",
                   # study12ARMA_09_24_25
                   # studyCGCN_09_25_25
                   # studyMLP_10_02_25
+                  # studyLSTM_10_27_25
               
               "cgcn_specific": {
                   "lr": 1e-3, 
