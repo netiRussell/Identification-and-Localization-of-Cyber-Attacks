@@ -9,6 +9,7 @@ import random
 from torch_geometric.loader import DataLoader
 import pandapower.topology as pptop
 import networkx as nx
+from torch.nn.utils import clip_grad_norm_
 
 
 from model.ARMA import GNNArma
@@ -417,6 +418,7 @@ def define_modelTransformer(hyperparams, config):
             num_ARMA_layers=config["transformer_specific"]["num_ARMA_layers"],
             hidden_channels=config["transformer_specific"]["hidden_channels"],
             d_model_channels=config["transformer_specific"]["d_model_channels"],
+            dim_feedforward = config["transformer_specific"]["dim_feedforward"],
             num_stacks=config["transformer_specific"]["num_stacks"], 
             num_layers=config["transformer_specific"]["num_layers"],
             transformer_heads=config["transformer_specific"]["transformer_heads"],
@@ -433,6 +435,7 @@ def define_modelTransformer(hyperparams, config):
             num_ARMA_layers=hyperparams["num_ARMA_layers"],
             hidden_channels=hyperparams["hidden_channels"],
             d_model_channels=hyperparams["d_model_channels"],
+            dim_feedforward = hyperparams["dim_feedforward"],
             num_stacks=hyperparams["num_stacks"], 
             num_layers=hyperparams["num_layers"],
             transformer_heads=config["transformer_specific"]["transformer_heads"],
@@ -509,6 +512,186 @@ def define_modelLSTM(hyperparams, config):
         )
         
     return model
+
+# -- Training & evaluation functions --
+def train_epoch(model, optimizer, epoch, train_loader, criterion, 
+                scheduler, config, device, autocast, use_amp, scaler):
+    model.train()
+
+    # derive accumulation from config
+    accum_steps = max(1, config["accumulated_batch_size"] // config["batch_size"])
+
+    total_loss = torch.zeros((), device=device)  # stays on GPU
+
+    optimizer.zero_grad(set_to_none=True)
+
+    for step, batch in enumerate(train_loader):
+        batch = batch.to(device, non_blocking=True)
+
+        with autocast(device_type=device.type if device.type!='cpu' else 'cuda',
+                      enabled=use_amp):
+            # logits
+            logits_nodes, logits_graph = model(
+                batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch
+            )
+            # normalize shapes
+            logits_nodes = logits_nodes.reshape(-1)
+            targets_nodes = batch.y.to(logits_nodes.dtype)
+
+            # raw loss for logging
+            raw_loss = criterion(logits_nodes, targets_nodes)
+
+        # accumulate loss for logging
+        total_loss += raw_loss.detach()
+
+        # divide only for backward to average gradients across accum_steps
+        loss_for_backward = raw_loss / accum_steps
+
+        scaler.scale(loss_for_backward).backward()
+        
+        # Full-batch step
+        if ((step + 1) % accum_steps == 0) or ((step + 1) == len(train_loader)):
+            if use_amp:
+                scaler.unscale_(optimizer)  # <-- needed before clipping
+            
+            # Check one what is the current grad (Commented out for performance)
+            '''
+            total_norm = clip_grad_norm_(model.parameters(), max_norm=10.0)
+            print(f"Grad norm before clipping: {total_norm:.4f}")
+            '''
+            
+            # Clip spikes in grad
+            clip_grad_norm_(model.parameters(), max_norm=10.0)    
+            
+            # Print current epoch, batch, loss (Commented out for performance)
+            '''
+            print(f"Epoch#{epoch}, Batch#{(step // accum_steps):04d} | Current loss: {loss_for_backward:.4f}\n")
+            '''
+            
+            # Applying grads
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+            scheduler.step()
+
+    # avg per minibatch
+    return (total_loss / len(train_loader)).item()
+
+def validate(model, valid_loader, criterion, config, device):
+    model.eval()
+
+    eps = 1e-12
+    n_batches = len(valid_loader)
+    num_nodes = config["num_nodes"]
+
+    total_loss = torch.zeros((), device=device)
+
+    # SW counters
+    F1_95_SW = torch.zeros((), device=device, dtype=torch.long)
+    F1_5_SW  = torch.zeros((), device=device, dtype=torch.long)
+    localization_acc = torch.zeros((), device=device, dtype=torch.long)
+    detection_acc    = torch.zeros((), device=device, dtype=torch.long)
+
+    # NW streaming confusion per bus
+    TP_b = torch.zeros(num_nodes, device=device, dtype=torch.long)
+    FP_b = torch.zeros(num_nodes, device=device, dtype=torch.long)
+    FN_b = torch.zeros(num_nodes, device=device, dtype=torch.long)
+
+    # Graph-level confusion
+    gTP = torch.zeros((), device=device, dtype=torch.long)
+    gFP = torch.zeros((), device=device, dtype=torch.long)
+    gFN = torch.zeros((), device=device, dtype=torch.long)
+    gTN = torch.zeros((), device=device, dtype=torch.long)
+
+    with torch.inference_mode():
+        for batch in valid_loader:
+            batch = batch.to(device, non_blocking=True)
+
+            logits_nodes, logits_graph = model(
+                batch.x, batch.edge_index, weights=batch.edge_attr, batch=batch.batch
+            )
+            logits_nodes = logits_nodes.reshape(-1)   # [num_nodes]
+            logits_graph = logits_graph.reshape(-1)   # [B] (usually 1)
+
+            targets_nodes = batch.y.to(logits_nodes.dtype)      # float
+            targets_graph = batch.y_graph.reshape(-1).to(torch.bool)
+
+            total_loss += criterion(logits_nodes, targets_nodes)
+
+            # Threshold logits directly (BCEWithLogitsLoss)
+            pred_nodes = (logits_nodes > 0)                      # bool [num_nodes]
+            pred_graph = (logits_graph > 0)                      # bool [B]
+
+            # Graph metrics
+            detection_acc += (pred_graph == targets_graph).all().long()
+            gTP += (pred_graph &  targets_graph).sum()
+            gFP += (pred_graph & ~targets_graph).sum()
+            gFN += (~pred_graph &  targets_graph).sum()
+            gTN += (~pred_graph & ~targets_graph).sum()
+
+            # Sample-wise SW metrics
+            t_nodes_b = targets_nodes.to(torch.bool)
+            TP = (pred_nodes &  t_nodes_b).sum()
+            FP = (pred_nodes & ~t_nodes_b).sum()
+            FN = (~pred_nodes &  t_nodes_b).sum()
+
+            precision = TP.float() / (TP.float() + FP.float() + eps)
+            recall    = TP.float() / (TP.float() + FN.float() + eps)
+            f1        = 2 * precision * recall / (precision + recall + eps)
+
+            # no-attack case: F1 = 1 only if all zeros predicted
+            no_attack = (~t_nodes_b).all()
+            perfect_zero = (pred_nodes.sum() == 0).float()
+            temp_F1_SW = torch.where(no_attack, perfect_zero, f1)
+
+            # strict match for attack samples; for no-attack, perfect_zero already used
+            strict_match = (pred_nodes == t_nodes_b).all().long()
+            localization_acc += torch.where(no_attack, (perfect_zero > 0).long(), strict_match)
+
+            F1_95_SW += (temp_F1_SW >= 0.95).long()
+            F1_5_SW  += (temp_F1_SW <= 0.05).long()
+
+            # Stream per-bus
+            TP_b += (pred_nodes &  t_nodes_b).long()
+            FP_b += (pred_nodes & ~t_nodes_b).long()
+            FN_b += (~pred_nodes &  t_nodes_b).long()
+
+    # NW aggregation
+    never_attacked = (TP_b == 0) & (FN_b == 0)
+    F1_95_NW = (never_attacked & (FP_b == 0)).sum()
+    F1_5_NW  = (never_attacked & (FP_b > 0)).sum()
+
+    attacked = ~never_attacked
+    F1_95_NW_tmp = torch.zeros((), device=device, dtype=torch.long)
+    F1_5_NW_tmp  = torch.zeros((), device=device, dtype=torch.long)
+    if attacked.any():
+        p_b = TP_b[attacked].float() / (TP_b[attacked] + FP_b[attacked] + eps)
+        r_b = TP_b[attacked].float() / (TP_b[attacked] + FN_b[attacked] + eps)
+        f1_b = 2 * p_b * r_b / (p_b + r_b + eps)
+        F1_95_NW_tmp = (f1_b >= 0.95).long().sum()
+        F1_5_NW_tmp  = (f1_b <= 0.05).long().sum()
+
+    F1_95_NW += F1_95_NW_tmp
+    F1_5_NW  += F1_5_NW_tmp
+
+    # Graph detection metrics
+    det_FA     = gFP.float() / (gFP + gTN + eps)
+    det_recall = gTP.float() / (gTP + gFN + eps)
+    det_prec   = gTP.float() / (gTP + gFP + eps)
+    det_F1     = 2 * det_prec * det_recall / (det_prec + det_recall + eps)
+
+    return (
+        det_recall.item(),
+        det_FA.item(),
+        det_F1.item(),
+        (F1_95_SW.float() / n_batches).item(),
+        (F1_5_SW.float()  / n_batches).item(),
+        (F1_95_NW.float() / num_nodes).item(),
+        (F1_5_NW.float()  / num_nodes).item(),
+        (localization_acc.float() / n_batches).item(),
+        (detection_acc.float()   / n_batches).item(),
+        (total_loss / n_batches).item(),
+    )
 
 # # # # # # # # # # # # # # # #
 # ---- Private functions ---- #

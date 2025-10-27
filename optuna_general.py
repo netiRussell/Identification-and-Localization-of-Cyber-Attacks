@@ -1,3 +1,13 @@
+"""
+TO MAKE OPTUNA MORE EFFICIENT:
+    EXCLUDE NUMPY->TENSOR->NUMPY TRANSFORMATIONS, STICK TO TENSOR
+    
+    GO OVER VALIDATIO AND TRAINING TO OMIT THINGS LIKE:
+        CALCULATING THE PRESENSE OF SPIKE AND THE GRADS IN THE TRAINING LOOP INSTEAD OF JUST CLIPPING AND THAT IS IT
+"""
+
+
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,6 +28,7 @@ from datetime import datetime
 from dataset import FDIADataset
 from dataset_generators.functions import preparePyGDataset, selectDevice
 from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer, define_modelCNN, define_modelMLP, define_modelLSTM
+from dataset_generators.functions import train_epoch, validate
 
 # TODO: delete at the final stage
 import sys
@@ -37,13 +48,19 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 4,
+              "model_selected": 5,
                   #0 = CGCN
-                  #1 = ARMA
+                  #1 = ARMAConv
                   #2 = ARMA-Transformer
                   #3 = CNN
                   #4 = MLP
                   #5 = LSTM
+                  
+              "optuna_study_name": "studyLSTM_10_27_25",
+                  # study12ARMA_09_24_25
+                  # studyCGCN_09_25_25
+                  # studyMLP_10_02_25
+                  # studyLSTM_10_27_25
               
               "cgcn_specific": {
                   "lr": 1e-3, 
@@ -71,6 +88,7 @@ config = {
                   },
               
               "transformer_specific": {
+                  # TODO: make the dim_feedforward parameter adjustable from here
                   "lr": 1e-3, 
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
@@ -80,6 +98,7 @@ config = {
                   "num_stacks": 3,  # K
                   "num_layers": 5,
                   "d_model_channels": 256, # channels of a transformer-encoder
+                  "dim_feedforward": 512, # Feed Forward dimensions
                   "transformer_heads": 4,
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
@@ -131,11 +150,8 @@ train_loader, valid_loader, _, in_feats = preparePyGDataset(config, FDIADataset)
 device = selectDevice()
 
 # - Scaler and Autocast -
-# (seems to have negative impact on the training; hence, turned off)
-#use_cuda = (device.type == 'cuda')
-#scaler = GradScaler(enabled=use_cuda)
-use_cuda = False
-scaler = GradScaler(enabled=False)
+use_amp = (device.type == 'cuda')  # or make it a config flag
+scaler = GradScaler(enabled=use_amp)
 
 n_lrWarmup_steps = 0
 if( config["model_selected"] == 0 ):
@@ -182,280 +198,6 @@ def lr_lambda(current_step: int):
     if current_step < n_lrWarmup_steps:
         return float(current_step) / n_lrWarmup_steps
     return 1.0  # keep base_lr after warm-up
-
-
-# -- Custom train and validation --
-def train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler):
-    # Turn on the training mode to include features like GraphNorm normalization
-    model.train()
-    
-    # Declare default value for loss and # of batches(steps) for grad accumulation
-    total_loss = 0
-    accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
-    
-    # Reset accumulated grads
-    optimizer.zero_grad()
-    
-    for minibatch_id, minibatch in enumerate(train_loader):
-        minibatch = minibatch.to(device)
-        
-        with autocast(device_type=device.type, enabled=use_cuda):
-            # Get targets for the batch
-            target_nodes = minibatch.y
-            target_graph = minibatch.y_graph
-            
-            # Get model's raw output (logits)
-            logits_nodes, logits_graph = model(minibatch.x, 
-                           minibatch.edge_index, 
-                           weights=minibatch.edge_attr,
-                           batch=minibatch.batch)
-            
-            # Compute loss and save it
-            loss = criterion(logits_nodes.view(-1), target_nodes)
-            loss += (criterion(logits_graph, target_graph.squeeze(0)))
-            total_loss += (loss.item()/accum_steps)
-
-        # Scale down the loss so that the grads are averaged over accum_steps
-        scaler.scale(loss / accum_steps).backward()
-        
-        # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
-        if (minibatch_id + 1) % accum_steps == 0 or (minibatch_id + 1) == len(train_loader):
-            # Clip gradients so their total L2 norm ≤ 1
-            clip_grad_norm_(model.parameters(), max_norm=10.0)
-
-            # Applying grads
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
-            scheduler.step()
-        
-    return total_loss / len(train_loader)
-
-def validate(model, valid_loader, criterion):
-    # Turn on the evaluation mode to exclude features like dropout regularizatiion
-    model.eval()
-    
-    # Keep track of loss for early stopping
-    total_loss = 0
-    
-    # Declare holders for metrics
-    det_FA = 0
-    det_recall = 0
-    det_F1 = 0
-    
-    F1_95_SW = 0
-    F1_5_SW = 0
-    
-    F1_95_NW = 0
-    F1_5_NW = 0
-    
-    localization_accuracy = 0
-    detection_accuracy = 0
-    
-    # Number of elements in metrices (total # of samples)
-    n_elem_metrices = len(valid_loader)
-    
-    # Holder for NW evaluation
-    # [bus_id][0][sample] = predictions
-    # [bus_id][1][sample] = targets
-    nw_metrics_holder = np.zeros((config["num_nodes"], 2, n_elem_metrices), dtype="float")
-    
-    # Holder for graph DR, FA, F1 computation
-    # [0][sample] = predictions
-    # [1][sample] = targets
-    det_metrics_holder = np.zeros( (2, n_elem_metrices), dtype="int" )
-    
-    # Make sure grads of the model won't be affected
-    with torch.no_grad():
-        for current_sample_id, sample in enumerate(valid_loader):
-            sample = sample.to(device)
-            
-            """
-            Sticking to tensors:
-                - Make sure the output of model(logits_nodes, logits_graph) is a tensor
-                - Delete any redundant tensor transformation since everything is already in tensors
-                - NumPy...
-            """
-
-            # Get model's raw output(logits)
-            logits_nodes, logits_graph = model(
-                sample.x,
-                sample.edge_index,
-                weights = sample.edge_attr,
-                batch = sample.batch
-            )
-            
-            # Change dimensions of the graph output to work with batch=1 case
-            logits_graph = logits_graph.squeeze(0)
-            logits_nodes = logits_nodes.squeeze(0)
-            
-            # Get node targets for the batch of size 1
-            target_nodes = sample.y
-            
-            # Compute loss
-            loss = criterion(logits_nodes, target_nodes)
-            #loss += criterion(logits_graph, target_graph)
-            total_loss += loss.item()
-            
-            # Apply activation function on the logits to get node-level probability
-            # and convert it into a classification
-            pred_nodes = (torch.sigmoid(logits_nodes) >= 0.5).float()  
-            
-            # Get graph-level classification and the correspoding target
-            graph_pred   = int((torch.sigmoid(logits_graph) >= 0.5).item())
-            target_graph = int(sample.y_graph.squeeze(0).item())
-            
-            # Save the information for the future detection evaluation
-            det_metrics_holder[0, current_sample_id] = graph_pred
-            det_metrics_holder[1, current_sample_id] = target_graph
-            
-            # Turn tensors into NumPy arrays
-            pred_nodes = pred_nodes.cpu().numpy()
-            target_nodes = target_nodes.cpu().numpy()
-            
-            # Save the information for the future NW evaluation
-            nw_metrics_holder[:, 0, current_sample_id ] = pred_nodes
-            nw_metrics_holder[:, 1, current_sample_id ] = target_nodes          
-            
-            # Calculate current metrics 
-            # Graph-level
-            if( target_graph == graph_pred):
-                detection_accuracy += 1
-            
-            # Node-level (SW evaluation)
-            if( target_graph == 0 ):
-                # - No attack case -
-                
-                # If prediction is 100% correct (all nodes = 0 since no attack)
-                if(np.sum(pred_nodes) == 0):
-                    temp_F1_SW = 1.0
-                    localization_accuracy += 1
-                    
-                # If at least 1 node is a mismatch (has a value of 1)    
-                else:
-                    temp_F1_SW = 0.0
-            else:
-                # - Attack took place case -
-                # Compute predictions
-                FP = np.logical_and(pred_nodes == 1, target_nodes == 0).sum()
-                FN = np.logical_and(pred_nodes == 0, target_nodes == 1).sum()
-                TP = np.logical_and(pred_nodes == 1, target_nodes == 1).sum()
-                
-                # Compute Recall(DR)
-                if((TP+FN) == 0):
-                    recall_SW = 0
-                else:
-                    recall_SW = TP / (TP+FN)
-                
-                # Compute Precision
-                prec_denom = (TP+FP)
-                if( prec_denom == 0 ):
-                    precision_SW = 0
-                else:
-                    precision_SW = TP / prec_denom
-                
-                # Compute F1 of the current sample
-                if(precision_SW == 0 or recall_SW == 0):
-                    temp_F1_SW = 0
-                else:
-                    temp_F1_SW = 2*((precision_SW*recall_SW)/(precision_SW+recall_SW))
-                
-                
-                # Compute a strict match
-                if( np.array_equal(pred_nodes, target_nodes) ):
-                    #print("+1 Strict match")
-                    localization_accuracy += 1
-            
-            # Increment the amount of samples >= 95%
-            if(temp_F1_SW >= 0.95):
-                F1_95_SW += 1
-            # Increment the amount of samples <= 5%
-            elif(temp_F1_SW <= 0.05):
-                F1_5_SW += 1
-            
-            # TO BE DELETED:
-            #print(f"Attack: {target_graph}/{graph_pred}, Current F1: {temp_F1_SW:.2f}, Num of buses with f1 > 95%: {F1_95_SW}")
-            #print(f"Number of ones exptected: {target_nodes.sum()}, predicted: {pred_nodes.sum()}\n")         
-        
-        
-        # Node-Wise (NW) evaluation:
-        for bus_id in range( config["num_nodes"] ):      
-            # Compute predictions
-            FP = np.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 0).sum()
-            FN = np.logical_and(nw_metrics_holder[bus_id][0] == 0, nw_metrics_holder[bus_id][1] == 1).sum()
-            TP = np.logical_and(nw_metrics_holder[bus_id][0] == 1, nw_metrics_holder[bus_id][1] == 1).sum()
-            
-            # Check if there was no attack on this bus 
-            # and the model predicted everything correctly
-            if( TP == 0 and FN == 0  ):
-                if( FP == 0 ):
-                    F1_95_NW += 1 # +1 perfect case
-                else:
-                    F1_5_NW += 1 # +1 worst case
-                    
-            # Otherwise, this bus has been attacked at some point
-            else:
-                # Compute Recall(DR)
-                if((TP+FN) == 0):
-                    recall_NW = 0
-                else:
-                    recall_NW = TP / (TP+FN)
-                
-                # Compute Precision
-                prec_denom = (TP+FP)
-                if( prec_denom == 0 ):
-                    precision_NW = 0
-                else:
-                    precision_NW = TP / prec_denom
-                
-                # Compute F1 of the current sample
-                if(precision_NW == 0 or recall_NW == 0):
-                    temp_F1_NW = 0
-                else:
-                    temp_F1_NW = 2*((precision_NW*recall_NW)/(precision_NW+recall_NW))
-                
-                
-                # Increment the amount of samples >= 95%
-                if(temp_F1_NW >= 0.95):
-                    F1_95_NW += 1
-                # Increment the amount of samples <= 5%
-                elif(temp_F1_NW <= 0.05):
-                    F1_5_NW += 1
-            
-            
-        # Graph detection evaluation
-        # Compute predictions
-        FP = np.logical_and(det_metrics_holder[0] == 1, det_metrics_holder[1] == 0).sum()
-        FN = np.logical_and(det_metrics_holder[0] == 0, det_metrics_holder[1] == 1).sum()
-        TP = np.logical_and(det_metrics_holder[0] == 1, det_metrics_holder[1] == 1).sum()
-        TN = np.logical_and(det_metrics_holder[0] == 0, det_metrics_holder[1] == 0).sum()
-        
-        # Compute FA
-        if( (FP + TN) == 0 ):
-            det_FA = 0
-        else:
-            det_FA = FP / (FP + TN)
-        
-        # Compute Recall(DR)
-        if( (TP+FN) == 0 ):
-            det_recall = 0
-        else:
-            det_recall = TP / (TP+FN)
-        
-        # Compute Precision
-        prec_denom = (TP+FP)
-        if( prec_denom == 0 ):
-            det_precision = 0
-        else:
-            det_precision = TP / prec_denom
-        
-        # Compute F1 of the current sample
-        if(det_precision == 0 or det_recall == 0):
-            det_F1 = 0
-        else:
-            det_F1 = 2*((det_precision*det_recall)/(det_precision+det_recall))
-        
-        return  det_recall, det_FA, det_F1, F1_95_SW/n_elem_metrices, F1_5_SW/n_elem_metrices, F1_95_NW/config["num_nodes"], F1_5_NW/config["num_nodes"], localization_accuracy/n_elem_metrices, detection_accuracy/n_elem_metrices,  total_loss/n_elem_metrices
 
 # -- Optuna functions --
 def objective(trial):
@@ -509,10 +251,10 @@ def objective(trial):
             # Generate hidden features
             hyperparams["num_CGCN_layers"] = trial.suggest_categorical("num_CGCN_layers", [3, 4])
             
-            # Generate number of stacks
+            # Generate number of layers
             hyperparams["u"] = trial.suggest_categorical("u", [16, 32, 64, 96, 128])
             
-            # Generate number of layers
+            # Generate number of stacks
             hyperparams["Ks"] = trial.suggest_categorical("Ks", [3, 5, 7])
             
             # Model
@@ -602,42 +344,41 @@ def objective(trial):
         else:
             raise IndexError("Incorrect model ID selected")
             
-        # Define the criterion  
+        # - Define the criterion  - 
         criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(hyperparams["pos_weight"]).to(device))
     
-        # Define the optimizer.
+        # - Define the optimizer -
         optimizer = optim.AdamW(model.parameters(), lr=hyperparams["lr"], weight_decay=weight_decay)
         
-        # Define scheduler
+        # - Define scheduler -
+        # Computing steps per epoch
+        steps_per_epoch = (len(train_loader) + (config["accumulated_batch_size"] - 1)) // config["accumulated_batch_size"]
+
+        # Linear scheduler for a warmup
         scheduler1 = LambdaLR(optimizer, lr_lambda)
-        num_batches = config["num_train_samples"] / config["accumulated_batch_size"]
-        scheduler2 = CosineAnnealingLR(optimizer, T_max=num_batches*config["num_epochs"]-n_lrWarmup_steps)
-        scheduler = SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[n_lrWarmup_steps])
+
+        # Cosine drop in learning rate all the way to nearly 0 at the last epoch
+        scheduler2 = CosineAnnealingLR(
+            optimizer, T_max=steps_per_epoch * config["num_epochs"] - n_lrWarmup_steps
+        )
+
+        # Combination of the two schedulers
+        scheduler = SequentialLR(
+            optimizer, schedulers=[scheduler1, scheduler2], milestones=[n_lrWarmup_steps]
+        )
         
-        # Useful data holders
-        loc_accuracies_arr = []
-        det_accuracies_arr = []
-        f1_arr = []
-        rec_arr = []
-        fa_arr = []
-        
-        # Training&Validating of the model.
+        # - Training&Validating of the model -
         for epoch in range(config["num_epochs"]):
             print(f"\n\nCurrent trial: {trial.number}")  
             print(f"Epoch {epoch}")
             
-            train_loss = train_epoch(model, optimizer, epoch, train_loader, criterion, scheduler)
+            train_loss = train_epoch(model, optimizer, epoch, train_loader, criterion, 
+                                     scheduler, config, device, autocast, use_amp, scaler)
             
             if epoch % 2 != 0:
                 # Conduct a validation for a single epoch
-                det_rec, det_FA, det_f1, f1_95_sw, f1_5_sw, f1_95_nw, f1_5_nw, loc_acc, det_acc, avg_loss = validate(model, valid_loader, criterion)
+                det_rec, det_FA, det_f1, f1_95_sw, f1_5_sw, f1_95_nw, f1_5_nw, loc_acc, det_acc, avg_loss = validate(model, valid_loader, criterion, config, device)
                 
-                # Append all the metrics from the validation
-                loc_accuracies_arr.append(loc_acc)
-                det_accuracies_arr.append(det_acc)
-                f1_arr.append(f1_95_sw)
-                rec_arr.append(det_rec)
-                fa_arr.append(det_FA)
                 
                 # Check how much time have passed since the beginning of the model training
                 # and print out the information of the epoch
@@ -647,11 +388,7 @@ def objective(trial):
                 print(f"NW F1>=95: {f1_95_nw:.4f}, NW F1<=5: {f1_5_nw:.4f}")
                 print(f"Localization accuracy={loc_acc:.4f}, Detection accuracy:{det_acc:.4f}")
                 
-                best_loc = max(loc_accuracies_arr)
-                best_det = max(det_accuracies_arr)
-                best_f1 = max(f1_arr)
-                print(f"Best localization={best_loc*100:.2f}% at epoch#{loc_accuracies_arr.index(best_loc)}, Best detection={best_det*100:.2f} at epoch#{det_accuracies_arr.index(best_det)}")
-                print(f"Best f1: {best_f1:.3f} at epoch#{f1_arr.index(best_f1)}")
+
                 print("----------------------------------------------------")
                 print("🔧 Trial Hyperparameters:")
                 for key, value in hyperparams.items():
@@ -688,18 +425,17 @@ def objective(trial):
 resume = True
 
 if( resume ):
-    # Hyper-tuning values:
-    study_name = "studyCGCN_09_25_25"
-    
-    optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-    storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
-    
+    # Study name:
+    study_name = config["optuna_study_name"]
 else:
-    # Hyper-tuning specific values:
+    # Study name:
     study_name = "study"+config["study_name"]+"_"+datetime.now().strftime("%m_%d_%y")
-    
-    optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-    storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
+
+# Enabling print out
+optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
+
+# Enabling the reusability of the study
+storage_name = "sqlite:///saved_Optuna/{}.db".format(study_name)
     
 # Study definition
 study = optuna.create_study(
