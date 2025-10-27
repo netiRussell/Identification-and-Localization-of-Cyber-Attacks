@@ -40,7 +40,7 @@ class CNN(nn.Module):
 
     def forward(self, x, edge_index, weights, batch):
         # x: [total_nodes, in_channels] -> [B, N, C]
-        x, _ = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
+        x, mask = to_dense_batch(x, batch, max_num_nodes=self.num_nodes)
         
         # For Conv1d, go to [B, C, N]
         x = x.permute(0, 2, 1).contiguous()
@@ -68,8 +68,11 @@ class CNN(nn.Module):
         if not torch.isfinite(logits_nodes).all():
             raise ValueError("Classifier output NaNs/Infs")
         
-        # Classification logits per graph (Identifying an attack)
-        logits_graph = logits_nodes.max(dim=1).values # choose max one
+        # Zero-out padded nodes to avoid bias leakage from conv/linear
+        x = x.masked_fill(~mask.unsqueeze(-1), 0)
+        
+        # Classification logits per graph (Identifying an attack): max over valid nodes only (mask padded nodes)
+        logits_graph = logits_nodes.masked_fill(~mask, float('-inf')).max(dim=1).values
         
         return logits_nodes, logits_graph
     
