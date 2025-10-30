@@ -94,7 +94,7 @@ config = {
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_ARMA_layers": 3,
-                  "hidden_channels": 64, # channels for ARMA
+                  "hidden_channels": 32, # channels for ARMA
                   "num_stacks": 3,  # K
                   "num_layers": 5,
                   "d_model_channels": 256, # channels of a transformer-encoder

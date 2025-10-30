@@ -56,7 +56,7 @@ config = {
               "model_selected": 2,
                   #0 = CGCN
                   #1 = ARMAConv
-                  #2 = ARMA-Transformer
+                  #2 = ARMA-Transformer (ACEOT)
                   #3 = CNN
                   #4 = MLP
                   #5 = LSTM
@@ -88,21 +88,21 @@ config = {
               
               "transformer_specific": {
                   # TODO: make the dim_feedforward parameter adjustable from here
-                  "lr": 1e-3, 
+                  "lr": 5.67e-4,
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_ARMA_layers": 3,
-                  "hidden_channels": 32, # channels for ARMA
+                  "hidden_channels": 128,# maybe 64? # channels for ARMA
                   "num_stacks": 3,  # K
-                  "num_layers": 5,
+                  "num_layers": 4,
                   "d_model_channels": 256, # channels of a transformer-encoder
                   "dim_feedforward": 512, # Feed Forward dimensions
                   "transformer_heads": 4,
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
-                  "dropout": 0.2, 
-                  "pos_weight": 9,
+                  "dropout": 0.28, 
+                  "pos_weight": 9, #TODO: try 2.05, it was the best for ARMAConv
                   },
               
               "cnn_specific": {

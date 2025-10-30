@@ -202,6 +202,8 @@ def visualizeLossValid(fa, dr, f1, acc):
     # Create a figure with two subplots side by side
     fig, ((g1, g2), (g3, g4)) = plt.subplots(2, 2)
     
+    print(fa)
+    
     # First plot
     g1.plot(range(1,len(fa)+1), fa, label='FA')
     g1.set_title('FA over epoch')
@@ -428,8 +430,6 @@ def define_modelTransformer(hyperparams, config):
             leakyRelu_rate=config["transformer_specific"]["leakyRelu_rate"]
         )
     else:
-        # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, d_model_channels, 
-        #                               num_stacks, num_layers, transformer_layers
         model = GNNArmaTransformer(
             in_channels=config["in_channels"],
             num_ARMA_layers=hyperparams["num_ARMA_layers"],
@@ -580,7 +580,7 @@ def train_epoch(model, optimizer, epoch, train_loader, criterion,
 def validate(model, valid_loader, criterion, config, device):
     model.eval()
 
-    eps = 1e-12
+    eps = 1e-12 # needed for efficient prevention of the division by zero
     n_batches = len(valid_loader)
     num_nodes = config["num_nodes"]
 
@@ -662,17 +662,13 @@ def validate(model, valid_loader, criterion, config, device):
     F1_5_NW  = (never_attacked & (FP_b > 0)).sum()
 
     attacked = ~never_attacked
-    F1_95_NW_tmp = torch.zeros((), device=device, dtype=torch.long)
-    F1_5_NW_tmp  = torch.zeros((), device=device, dtype=torch.long)
     if attacked.any():
         p_b = TP_b[attacked].float() / (TP_b[attacked] + FP_b[attacked] + eps)
         r_b = TP_b[attacked].float() / (TP_b[attacked] + FN_b[attacked] + eps)
         f1_b = 2 * p_b * r_b / (p_b + r_b + eps)
-        F1_95_NW_tmp = (f1_b >= 0.95).long().sum()
-        F1_5_NW_tmp  = (f1_b <= 0.05).long().sum()
 
-    F1_95_NW += F1_95_NW_tmp
-    F1_5_NW  += F1_5_NW_tmp
+    F1_95_NW += (f1_b >= 0.95).long().sum()
+    F1_5_NW  += (f1_b <= 0.05).long().sum()
 
     # Graph detection metrics
     det_FA     = gFP.float() / (gFP + gTN + eps)
