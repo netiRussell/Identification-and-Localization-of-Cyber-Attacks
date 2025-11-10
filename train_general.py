@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
 from dataset import FDIADataset
 from dataset_generators.functions import save_checkpoint, preparePyGDataset, selectDevice
 from dataset_generators.functions import define_modelCGCN, define_modelARMA, define_modelTransformer, define_modelCNN, define_modelMLP, define_modelLSTM
-from dataset_generators.functions import train_epoch, validate
+from dataset_generators.functions import train_epoch, train_epoch_old, validate
 
 # TODO: delete at the final stage
 import sys
@@ -53,7 +53,7 @@ config = {
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 2,
+              "model_selected": 4,
                   #0 = CGCN
                   #1 = ARMAConv
                   #2 = ARMA-Transformer (ACEOT)
@@ -78,31 +78,30 @@ config = {
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
-                  "num_ARMA_layers": 3, # TODO: TRY CHANGING THESE FOUR
-                  "hidden_channels": 64, # TODO: TRY CHANGING THESE FOUR
-                  "num_stacks": 3,  # K
-                  "num_layers": 5, # TODO: TRY CHANGING THESE FOUR
+                  "num_ARMA_layers": 3, 
+                  "hidden_channels": 64,
+                  "num_stacks": 3,
+                  "num_layers": 5,
                   "dropout": 0.2,
                   "pos_weight": 1.5,
                   },
               
               "transformer_specific": {
-                  # TODO: make the dim_feedforward parameter adjustable from here
-                  "lr": 5.67e-4,
+                  "lr": 1e-3, 
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_ARMA_layers": 3,
-                  "hidden_channels": 128,# maybe 64? # channels for ARMA
+                  "hidden_channels": 32, # channels for ARMA
                   "num_stacks": 3,  # K
-                  "num_layers": 4,
+                  "num_layers": 5,
                   "d_model_channels": 256, # channels of a transformer-encoder
-                  "dim_feedforward": 512, # Feed Forward dimensions
+                  "dim_feedforward": 512,
                   "transformer_heads": 4,
                   "transformer_layers": 2,
                   "leakyRelu_rate": 0.1,
-                  "dropout": 0.28, 
-                  "pos_weight": 9, #TODO: try 2.05, it was the best for ARMAConv
+                  "dropout": 0.2, 
+                  "pos_weight": 9,
                   },
               
               "cnn_specific": {
@@ -123,10 +122,10 @@ config = {
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
-                  "num_MLP_layers": 4,
+                  "num_MLP_layers": 3,
                   "units": 128,
-                  "dropout": 0.2,
-                  "pos_weight": 4.5,
+                  "dropout": 0.3,
+                  "pos_weight": 1,
                   },
               
               "lstm_specific": {
@@ -346,6 +345,8 @@ for epoch in range(1, config["num_epochs"] + 1):
         print(f"Checkpoint saved at epoch#{epoch}")
         
     # Early stopping if loss doesn't decrease at least by 10^-4 through 16 epochs
+    
+    #if epoch >= 100:
     if best_loss - avg_loss >= 1e-4:
         best_loss = avg_loss
         patience_counter = 0

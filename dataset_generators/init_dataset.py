@@ -9,17 +9,11 @@ from concurrent.futures import ProcessPoolExecutor
 import copy
 import itertools
 
-# Should I scale both react and act power with the same scaling factor? Yes
-# sigma_s is ^2 in the paper. Is it just notation or should I square it as well? Yes
-# Is it ok to use absolute value for the std when conducting 1% additive noise: scale=abs(z * sigma_n) Yes
-# Is my PSSE function correct, is flat(sets 1.0 p.u. / 0° for all buses) a good values for init?
-    # Is it ok to use WLS as the algorithm for PSSE?
-    # Is it ok to use std=abs(p)*sigma_n when creating measurements?
-# For some samples, AC powerflow alg doesn't converge, is that normal?
-# Are you sure X is used as node features? In the papers, attack targets Z0. Z for all!
-# For data-replay attack, what is the value for Tau? 4
-
-# ! Should I substitute PSSE from pandapower with the formula from the paper?
+config = {
+       'init_dataset_path': "../init_datasetIEEE14",
+       'final_dataset_path': "../final_datasetIEEE14",
+       'net_template': pn.case14(), # ! Change seperately in the worker function
+       }
 
 """
 Each transmission line or branch connects two buses:
@@ -84,10 +78,6 @@ def scalerGenerator():
     np.save("S.npy", norm_vec)
 
 # -- Initial Configurations --
-# IEEE bus systems
-N = {"14": pn.case14(),
-     "118": pn.case118(),
-     "300": pn.case300()}
 # Number of timesteps
 T = 36000 
 # Scaling coefficients
@@ -195,7 +185,7 @@ def generate(net, S_t, G, nodelist, originals):
 
 def worker(t, G, nodelist):
     # each worker builds its own IEEE-300 net
-    net  = pn.case300()# right after net = pn.case300()
+    net  = pn.case14()# right after net = pn.case300()
     
     # Copy generator, active and reactive powers to reuse them later
     originals = {
@@ -220,7 +210,7 @@ def worker(t, G, nodelist):
 # ---- Main code ---- #
 # # # # # # # # # # # #
 # -- Select network --
-net = N["300"]
+net = config["net_template"]
 
 # -- Run the AC powerflow algorithm to generate the Y bus --
 pp.runpp(net)
@@ -240,11 +230,11 @@ edge_indices = np.vstack([rows, cols])          # shape [2, E]
 weights = W[rows, cols]                   # shape [E]
 
 # -- Save the net structure as edge indices and correpsonding weights  --
-np.save("../init_dataset/edge_indices", edge_indices)
-np.save("../final_dataset/edge_indices", edge_indices)
+np.save(f"{config['init_dataset_path']}/edge_indices", edge_indices)
+np.save(f"{config['final_dataset_path']}/edge_indices", edge_indices)
 
-np.save("../init_dataset/weights", weights)
-np.save("../final_dataset/weights", weights)
+np.save(f"{config['init_dataset_path']}/weights", weights)
+np.save(f"{config['final_dataset_path']}/weights", weights)
 
 # -- Turn the net into a graph --
 G = pptop.create_nxgraph(
@@ -269,7 +259,7 @@ neighbors = [
 
 # -- Save direct neighbors of each node --
 # (Saved as an object because of inconsistent neighbors[:, 1].shape)
-np.save("../init_dataset/neighbors", np.array(neighbors, dtype=object))
+np.save(f"{config['init_dataset_path']}/neighbors", np.array(neighbors, dtype=object))
 
 # -- For L timesteps, generate a sample --
 if __name__ == "__main__":
@@ -282,8 +272,8 @@ if __name__ == "__main__":
             z, x = result
             
             # Save the converged sample
-            np.save(f"../init_dataset/Z_{idx}.npy", z)
-            np.save(f"../init_dataset/X_{idx}.npy", x)
+            np.save(f"{config['init_dataset_path']}/Z_{idx}.npy", z)
+            np.save(f"{config['init_dataset_path']}/X_{idx}.npy", x)
             idx += 1
     
     print(f"Done. Saved {idx-1} samples.")

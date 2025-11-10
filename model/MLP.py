@@ -4,9 +4,6 @@ import torch.nn.functional as F
 from torch_geometric.nn import Linear
 from torch_geometric.utils import to_dense_batch
 
-# to be deleted
-import sys
-
 class MLP(nn.Module):
     """
     GNN encoder using ARMA filters.

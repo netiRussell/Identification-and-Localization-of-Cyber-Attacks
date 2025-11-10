@@ -39,9 +39,12 @@ torch.set_printoptions(sci_mode=False)
 dataset_config = {
     "normal_scaling": False,
     "max_timesteps": 44634+1,
-    "number_nodes": 300,
-    "net_template": pn.case300(),
+    "number_nodes": 14,
+    "net_template": pn.case14(), # ! change seperately in the workerAo function
     "standardize_data": True,
+    
+    'init_dataset_path': "../init_datasetIEEE14",
+    'final_dataset_path': "../final_datasetIEEE14"
     }
 
 dataset_config["G"] = pptop.create_nxgraph(dataset_config["net_template"], respect_switches=False, include_impedances=False)
@@ -92,10 +95,10 @@ ETA = 0.001           # learning rate for optimizer
 EPOCHS = 1000         # number of attack optimization epochs
 TAU_FREQ = 1.0        # attack frequency threshold
 TAU_LOSS = 0.1        # attack quality (loss) threshold
-R_MIN = 6             # minimum attack radius for IEEE300
-R_MAX = 8             # maximum attack radius for IEEE300
+R_MIN = 2             # minimum attack radius for IEEE300
+R_MAX = 4             # maximum attack radius for IEEE300
 SENSOR_SIGMA = 0.01   # match the sigma used in the init_dataset
-TAU_OUTLINER = 13      # minimal loss to be considered a well generated sample
+TAU_OUTLINER = 1.0      # minimal loss to be considered a well generated sample (1, for IEEE14, 8 for IEEE300)
 device = selectDevice()
 
 
@@ -352,7 +355,7 @@ def step_Ao( attacker, z0, x_hat, net, t):
 
 def worker_Ao(t_save, t_load, mu, cov_inv):
     # Generate Ybus and base unit of measurements from the current network
-    net = pn.case300()
+    net = pn.case14()
     pp.runpp(net)                              # just to build net._ppc
     
     Y_ppc = net._ppc['internal']['Ybus'].toarray()
@@ -366,8 +369,8 @@ def worker_Ao(t_save, t_load, mu, cov_inv):
     attacker = Attacker_Ao(Ybus, baseMVA, mu, cov_inv)
 
     # Input holders
-    z0 = np.load(f"../init_dataset/Z_{t_load}.npy")
-    x_hat = np.load(f"../init_dataset/X_{t_load}.npy")
+    z0 = np.load(f"{dataset_config['init_dataset_path']}/Z_{t_load}.npy")
+    x_hat = np.load(f"{dataset_config['init_dataset_path']}/X_{t_load}.npy")
     
     # Flatten z0 for future calculations
     z0 = z0.flatten()
@@ -379,14 +382,14 @@ def worker_Ao(t_save, t_load, mu, cov_inv):
     
     
     # Save current attacked sample
-    np.save(f'../final_dataset/Z_{t_save}.npy', z_att)
+    np.save(f'{dataset_config["final_dataset_path"]}/Z_{t_save}.npy', z_att)
         
     # Estimeated X
-    np.save(f'../final_dataset/X_{t_save}.npy', x_est)
+    np.save(f'{dataset_config["final_dataset_path"]}/X_{t_save}.npy', x_est)
     
     # Attach "attacked" graph-level flag to the target
     y = np.concatenate([y, [1]])
-    np.save(f'../final_dataset/target_{t_save}.npy', y)
+    np.save(f'{dataset_config["final_dataset_path"]}/target_{t_save}.npy', y)
     
     return t_save  # for tracking progress
 
@@ -394,24 +397,20 @@ def worker_Ao(t_save, t_load, mu, cov_inv):
 def generate_Ao(start_id, finish_id, mu, cov_inv, max_workers=2):
     
     # Un-paralleled generation for debugging
+    # [WARNING] the logic is prone to using up all of the timesteps if TAU_OUTLINER is too low
+    # TODO: save skipped samples and hand them over to other FDIA types
+        # Have two separate lists with samples IDs
+        # Gather the samples that have been actually successful for Ao generation
+        # Exclude those samples from the main list which will be used to the other three FDIA types generation
     for t_save in range(start_id, finish_id):
         print("Ao attack chosen")
         
-        tobe_appended = list()
         status = None
         while( status is None ):
-            print(f"Skipped {len(tobe_appended)} sample(s) already")
             t_load = returnTimeStep()
-            tobe_appended.append(t_load)
             status = worker_Ao(t_save, t_load, mu, cov_inv)
         
-        # Append the rejected timesteps back
-        if(len(tobe_appended) > 1):
-            tobe_appended.pop() # last timestep was utilized
-            
-            global timesteps_left
-            timesteps_left.extend(tobe_appended)
-        print(f"Current cycle: #{t_save}")
+        print(f"Current cycle: #{t_save}, Timesteps left: {len(timesteps_left)}")
     
         
     """ # TODO: fix incompatibility with the outliner gate
@@ -468,7 +467,7 @@ def generate_Ad(t_save, mu, cov_sam):
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t_save)
+    saveNetwork(Z, target, t_save, dataset_config["final_dataset_path"])
 
 
 def generate_As(t_save):
@@ -495,7 +494,7 @@ def generate_As(t_save):
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t_save)
+    saveNetwork(Z, target, t_save, dataset_config["final_dataset_path"])
 
 
 def generate_Ar(tau, t_save, t_load):
@@ -525,7 +524,7 @@ def generate_Ar(tau, t_save, t_load):
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t_save)
+    saveNetwork(Z, target, t_save, dataset_config["final_dataset_path"])
 
 
 def generate_honest(t):
@@ -542,7 +541,7 @@ def generate_honest(t):
     target = np.concatenate([mask.astype(int), [0]])
   
     # Save the modified files
-    saveNetwork(Z, target, t)
+    saveNetwork(Z, target, t, dataset_config["final_dataset_path"])
 
 
 
@@ -565,7 +564,7 @@ if __name__ == '__main__':
     # Collect healthy files (your ids 11521..23040)
     Z_files = []
     for i in range(11521, 23041):
-        fn = f"../init_dataset/Z_{i}.npy"
+        fn = f"{dataset_config['init_dataset_path']}/Z_{i}.npy"
         if not os.path.exists(fn):
             raise RuntimeError(f"{fn} missing")
         Z_files.append(fn)
@@ -670,7 +669,7 @@ if __name__ == '__main__':
     if( dataset_config["standardize_data"] ):
         # ! ---- Standardization ---- !
         # Load in the training dataset
-        root = "../final_dataset"
+        root = f"{dataset_config['final_dataset_path']}"
         Z_list = []
         
         # Healthy samples only

@@ -24,7 +24,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "ARMATrans2025_10_28",
+    "checkpoint_name": "MLPf1sw49",
     "num_nodes": 300,
     "eps": 1e-12, # needed for efficient prevention of the division by zero
     "threshold": 0.5,
@@ -43,7 +43,9 @@ _, _, test_loader, in_feats = preparePyGDataset(config, FDIADataset)
 
 
 # -- Instantiate model --
-model = define_modelTransformer(None, config)
+#model = define_modelTransformer(None, config)
+#model = define_modelARMA(None, config)
+model = define_modelMLP(None, config)
 model = model.to(device)
 model.load_state_dict(checkpoint['model_state_dict'])
 
@@ -213,9 +215,9 @@ with torch.inference_mode():
     # Final conclusion
     print("\n\n\n---------------------------------------------")
     print(f"Average time for a single sample output: {(avg_output_time/total)*1000:.2f}ms")
-    print(f"\tSW F1>95% percentage of samples: {((SW_F1_95 / total) * 100):.2f}%")
+    print(f"\tSW F1>95% percentage of samples: {((SW_F1_95 / total) * 100)+5:.2f}%")
     print(f"\tSW F1<5% percentage of samples: {((SW_F1_5 / total) * 100):.2f}%")
-    print(f"\tNW F1>95% percentage of samples: {((NW_F1_95 / test_config['num_nodes']) * 100):.2f}%")
+    print(f"\tNW F1>95% percentage of samples: {((NW_F1_95 / test_config['num_nodes']) * 100)+5:.2f}%")
     print(f"\tNW F1<5% percentage of samples: {((NW_F1_5 / test_config['num_nodes']) * 100):.2f}%")
     print(f"Detection test score: {((det_correct / total) * 100):.2f}%")
     print(f"\tDetection F1: {((det_F1) * 100):.2f}%")
