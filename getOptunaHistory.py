@@ -2,7 +2,7 @@ import optuna
 import sys
 import logging
 
-study_name = "studyMLP_10_02_25"
+study_name = "studyLSTM_10_27_25"
 # study12ARMA_09_24_25
 # studyCGCN_09_25_25
 # studyMLP_10_02_25

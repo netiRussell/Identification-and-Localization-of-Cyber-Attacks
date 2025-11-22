@@ -11,14 +11,21 @@ import pandapower.topology as pptop
 import networkx as nx
 from torch.nn.utils import clip_grad_norm_
 
-'''
-from model.ARMA import GNNArma
-from model.ARMA_Transformer import GNNArmaTransformer
-from model.CGCN import CGCN
-from model.CNN import CNN
-from model.MLP import MLP
-from model.LSTM import LSTM
-'''
+try:
+    from model.ARMA import GNNArma
+    from model.ARMA_Transformer import GNNArmaTransformer
+    from model.CGCN import CGCN
+    from model.CNN import CNN
+    from model.MLP import MLP
+    from model.LSTM import LSTM
+except ImportError:
+    GNNArma = None
+    GNNArmaTransformer = None
+    CGCN = None
+    CNN = None
+    MLP = None
+    LSTM = None
+
 
 # TODO: To be deleted
 import sys
@@ -57,7 +64,7 @@ def saveNetwork( X, target, i, location):
   np.save(f"{location}/target_{i}", target)
 
 
-def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nodes=300):
+def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nodes, init_dataset_path):
     """
     Returns node features of timestep t_load and a mask 
     filled with False values of size number_nodes
@@ -78,6 +85,12 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
  
     radius : Integer
         The maximum number of hops from the entry bus to include in the BFS region.
+    
+    number_nodes : Integer
+        The number of nodes in the network
+        
+    init_dataset_path : String
+        The path to the directory where initial samples are located
 
     Returns:
     -------
@@ -91,9 +104,17 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
         List of nodes to be attacked
     """
     T_x = list()
+    patience_counter = 0
     
-    # Make sure the number of attacked buses are always >= 2 (2 for IEEE14, 5 for IEEE300)
-    while(len(T_x) < 2):
+    # Make sure the number of attacked buses are always >= 2 (2 for IEEE14, 3 for IEEE118, 5 for IEEE300)
+    while(len(T_x) < 3):
+        # If you can't find a suitable set of buses to be attacked
+        if patience_counter > 10:
+            print("Couldn't find a suitable set of attacked buses. Error origin: load_tobeAttacked()")
+            return None, None, None
+        
+        patience_counter += 1
+        
         lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
         attacked_buses = list(lengths.keys())
     
@@ -107,11 +128,11 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
     mask[T_x] = True
     
     # Z = Node features array
-    Z = np.load(f"../init_dataset/Z_{t_load}.npy")
+    Z = np.load(f"{init_dataset_path}/Z_{t_load}.npy")
     
     return Z, mask, T_x
 
-def load_honest( t_load, number_nodes=300 ):
+def load_honest( t_load, number_nodes, init_dataset_path ):
   """
   Returns node features of timestep t_load and a mask 
   filled with False values of size number_nodes
@@ -123,7 +144,9 @@ def load_honest( t_load, number_nodes=300 ):
     
   number_nodes: Integer
       Number of nodes present in the current network
-      
+
+  init_dataset_path : String
+      The path to the directory where initial samples are located
 
   Returns:
   -------
@@ -134,7 +157,7 @@ def load_honest( t_load, number_nodes=300 ):
     Boolean mask used to selectively modify only the rows of data corresponding to True values in it
   """
   # Z = Node features array
-  Z = np.load(f"../init_dataset/Z_{t_load}.npy")
+  Z = np.load(f"{init_dataset_path}/Z_{t_load}.npy")
 
   # Declare and Define mask with no True values(nothing to attack)
   mask = np.full(number_nodes, False, dtype="bool")

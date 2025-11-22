@@ -42,18 +42,18 @@ Output: 2848 boolean values where False means no attack on the bus and Trues mea
     
 # -- Define the params and hyperparams for training --
 config = {
-              "dataset_root": "./final_dataset",
+              "dataset_root": "./final_datasetIEEE14",
               "num_train_samples": 23040,
               "accumulated_batch_size": 256,
               "in_channels": 2,
               
               
-              "num_nodes": 300,
+              "num_nodes": 14,
               "num_epochs": 256,
               "batch_size": 4, # 256 with gradient accumulation
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 4,
+              "model_selected": 5,
                   #0 = CGCN
                   #1 = ARMAConv
                   #2 = ARMA-Transformer (ACEOT)
@@ -62,14 +62,14 @@ config = {
                   #5 = LSTM
               
               "cgcn_specific": {
-                  "lr": 1e-3, 
+                  "lr": 1e-2, 
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_CGCN_layers": 3,
                   "u": 96, # hidden channels
                   "Ks": 4,
-                  "dropout": 0.3,
+                  "dropout": 0.1,
                   "pos_weight": 3,
                   },
               
@@ -91,14 +91,14 @@ config = {
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
-                  "num_ARMA_layers": 3,
-                  "hidden_channels": 32, # channels for ARMA
+                  "num_ARMA_layers": 2,
+                  "hidden_channels": 16, # channels for ARMA
                   "num_stacks": 3,  # K
-                  "num_layers": 5,
-                  "d_model_channels": 256, # channels of a transformer-encoder
-                  "dim_feedforward": 512,
-                  "transformer_heads": 4,
-                  "transformer_layers": 2,
+                  "num_layers": 2,
+                  "d_model_channels": 33, # channels of a transformer-encoder
+                  "dim_feedforward": 64,
+                  "transformer_heads": 3,
+                  "transformer_layers": 1,
                   "leakyRelu_rate": 0.1,
                   "dropout": 0.2, 
                   "pos_weight": 9,
@@ -113,7 +113,7 @@ config = {
                   "Ks": 3,
                   "units": 64,
                   "padding": "same",
-                  "dropout": 0.2,
+                  "dropout": 0.15,
                   "pos_weight": 2,
                   },
               
@@ -129,14 +129,14 @@ config = {
                   },
               
               "lstm_specific": {
-                  "lr": 1e-3, 
+                  "lr": 1.50e-2,
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_LSTM_layers": 3,
-                  "units": 128,
-                  "dropout": 0.2,
-                  "pos_weight": 4.5,
+                  "units": 32, 
+                  "dropout": 0.25,
+                  "pos_weight": 5,
                   },
               
           }

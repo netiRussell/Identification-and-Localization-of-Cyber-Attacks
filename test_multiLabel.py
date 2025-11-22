@@ -24,8 +24,8 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "MLPf1sw49",
-    "num_nodes": 300,
+    "checkpoint_name": "ARMATrans2025_11_18",
+    "num_nodes": 14,
     "eps": 1e-12, # needed for efficient prevention of the division by zero
     "threshold": 0.5,
     }
@@ -43,9 +43,11 @@ _, _, test_loader, in_feats = preparePyGDataset(config, FDIADataset)
 
 
 # -- Instantiate model --
-#model = define_modelTransformer(None, config)
+model = define_modelTransformer(None, config)
 #model = define_modelARMA(None, config)
-model = define_modelMLP(None, config)
+#model = define_modelMLP(None, config)
+#model = define_modelCGCN(None, config)
+#model = define_modelLSTM(None, config)
 model = model.to(device)
 model.load_state_dict(checkpoint['model_state_dict'])
 
