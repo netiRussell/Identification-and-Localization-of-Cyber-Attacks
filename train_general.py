@@ -44,16 +44,16 @@ Output: 2848 boolean values where False means no attack on the bus and Trues mea
 config = {
               "dataset_root": "./final_datasetIEEE14",
               "num_train_samples": 23040,
-              "accumulated_batch_size": 256,
+              "accumulated_batch_size": 256, # this is when the backpropagation takes place
               "in_channels": 2,
               
               
               "num_nodes": 14,
               "num_epochs": 256,
-              "batch_size": 4, # 256 with gradient accumulation
+              "batch_size": 4, # how many samples to load in per grads calculations
               "n_lrWarmup_steps": 500, # 1 batch = 1 step
               
-              "model_selected": 5,
+              "model_selected": 2,
                   #0 = CGCN
                   #1 = ARMAConv
                   #2 = ARMA-Transformer (ACEOT)
@@ -67,23 +67,23 @@ config = {
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_CGCN_layers": 3,
-                  "u": 96, # hidden channels
-                  "Ks": 4,
+                  "u": 64, # hidden channels
+                  "Ks": 3,
                   "dropout": 0.1,
                   "pos_weight": 3,
                   },
               
               "arma_specific": {
-                  "lr": 1e-3, 
+                  "lr": 2e-3, 
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_ARMA_layers": 3, 
-                  "hidden_channels": 64,
-                  "num_stacks": 3,
-                  "num_layers": 5,
-                  "dropout": 0.2,
-                  "pos_weight": 1.5,
+                  "hidden_channels": 32,
+                  "num_stacks": 2,
+                  "num_layers": 3,
+                  "dropout": 0.10,
+                  "pos_weight": 3,
                   },
               
               "transformer_specific": {
@@ -91,17 +91,17 @@ config = {
                   "weight_decay": 1e-2,
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
-                  "num_ARMA_layers": 2,
-                  "hidden_channels": 16, # channels for ARMA
-                  "num_stacks": 3,  # K
-                  "num_layers": 2,
-                  "d_model_channels": 33, # channels of a transformer-encoder
-                  "dim_feedforward": 64,
+                  "num_ARMA_layers": 3, 
+                  "hidden_channels": 64, # channels for ARMA 
+                  "num_stacks": 2,  # K
+                  "num_layers": 3,
+                  "d_model_channels": 63, # channels of a transformer-encoder
+                  "dim_feedforward": 126,
                   "transformer_heads": 3,
                   "transformer_layers": 1,
                   "leakyRelu_rate": 0.1,
-                  "dropout": 0.2, 
-                  "pos_weight": 9,
+                  "dropout": 0.25, 
+                  "pos_weight": 8.5,
                   },
               
               "cnn_specific": {
@@ -123,8 +123,8 @@ config = {
                   "n_lrWarmup_steps": 500, # 1 batch = 1 step
                   
                   "num_MLP_layers": 3,
-                  "units": 128,
-                  "dropout": 0.3,
+                  "units": 64,
+                  "dropout": 0.2,
                   "pos_weight": 1,
                   },
               

@@ -24,7 +24,7 @@ np.random.seed(123)
 
 
 test_config = {
-    "checkpoint_name": "ARMATrans2025_11_18",
+    "checkpoint_name": "./ARMATrans_IEEE14",
     "num_nodes": 14,
     "eps": 1e-12, # needed for efficient prevention of the division by zero
     "threshold": 0.5,
@@ -33,6 +33,7 @@ test_config = {
 
 # -- Select device --
 device = selectDevice()
+print(f"Launching checkpoint: {test_config['checkpoint_name']}")
 
 # -- Load the saved state --
 checkpoint = torch.load(f"./saved_grads/{test_config['checkpoint_name']}.tar", map_location=device, weights_only=False)
@@ -48,6 +49,7 @@ model = define_modelTransformer(None, config)
 #model = define_modelMLP(None, config)
 #model = define_modelCGCN(None, config)
 #model = define_modelLSTM(None, config)
+#model = define_modelCNN(None, config)
 model = model.to(device)
 model.load_state_dict(checkpoint['model_state_dict'])
 
