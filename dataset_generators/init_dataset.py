@@ -12,6 +12,8 @@ config = {
        'init_dataset_path': "../init_datasetIEEE118",
        'final_dataset_path': "../final_datasetIEEE118",
        'net_template': pn.case118(), # ! Change seperately in the worker function
+       
+       'generate_S': True
        }
 
 """
@@ -52,7 +54,7 @@ def scalerGenerator():
     from sklearn.preprocessing import StandardScaler  # or MinMaxScaler
     
     # Load & concat
-    # 4 season representative months(Jan, Apr, Jul, Oct) in 2024 NYISO are picked
+    # Summer months(Jun, Jul, Aug) in 2024 NYISO are picked
     files = glob.glob("./csv/*.csv")
     dfs = []
     for fn in files:
@@ -83,6 +85,10 @@ k = 0.1
 sigma_s=0.03
 # Noise coefficient
 sigma_n = 0.01
+# Generate new S
+if(config["generate_S"]):
+    scalerGenerator()
+    print("New S has been generated")
 # Scaling vector
 S = np.load("S.npy")
 
