@@ -10,7 +10,7 @@ data_ieee14_SW = {
     "LSTM":     {"gt95": 67.22,    "lt5": 20.14},
     "ChebConv": {"gt95": 82.76,    "lt5": 7.10},
     "ARMAConv": {"gt95": 82.74,    "lt5": 7.52},
-    "ACEOT":    {"gt95": 20,    "lt5": 5},
+    "ACEOT":    {"gt95": 83.19,    "lt5": 8.85},
 }
 
 data_ieee14_NW = {
@@ -19,7 +19,7 @@ data_ieee14_NW = {
     "LSTM":     {"gt95": 47.86,    "lt5": 0},
     "ChebConv": {"gt95": 48.30,    "lt5": 2.54},
     "ARMAConv": {"gt95": 48.16,    "lt5": 1.98},
-    "ACEOT":    {"gt95": 20,    "lt5": 5},
+    "ACEOT":    {"gt95": 49.09,    "lt5": 3.15},
 }
 
 data_ieee300_SW = {
@@ -161,7 +161,7 @@ ax.tick_params(axis='x', pad=-2)  # move x tick labels toward the axis
 ax.tick_params(axis='y', pad=0)  # move y tick labels toward the axis
 ax.tick_params(axis='z', pad=0, labelsize=7)
 
-ax.set_zticks(np.arange(0, 81, 5))  # 86 SW, 56 NW
+ax.set_zticks(np.arange(0, 86, 5))  # 81 SW, 51 NW
 
 
 # put Networks next to their rows
