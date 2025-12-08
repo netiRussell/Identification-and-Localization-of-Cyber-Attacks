@@ -61,7 +61,7 @@ def tsne(files, num_nodes, title):
         perplexity=PERPLEXITY,
         learning_rate=200,
         early_exaggeration=5,
-        n_iter=1000,
+        max_iter=1000,
         init='pca',
     )
 

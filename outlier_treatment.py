@@ -26,7 +26,10 @@ config = {
         "move_outliers": True,
         
         # Show t-SNE pre and post
-        "show_tsne": False,
+        "show_tsne": True,
+        
+        # Apply the physics check
+        "phys_check": False,
         
         # p. u. limits
         "vm_min": 0.9,
@@ -45,7 +48,7 @@ config = {
         "IF_contamination": 0.01,
         "IF_n_estimators": 200,
         "IF_random_state": 123,
-        "IF_max_train_samples": 20000, # subsample size for IF training (None = all)
+        "IF_max_train_samples": 40000, # subsample size for IF training (None = all)
         "IF_batch_size": 512, # number of samples to load in per IF predicting cycle
     }
 
@@ -141,45 +144,47 @@ if __name__ == "__main__":
     
     # Outlier treatment for the healthy dataset
     if( config['mode'] == 1 ):
-        # Generate the adjacency matrix from weights and edges
+        # Get the corresponding data
         edges = np.load(f"{config['dataset_root_healthy']}/edge_indices.npy")
-        
         num_nodes = int(edges.max()) + 1
     
-        adjacency = np.zeros((num_nodes, num_nodes), dtype=int)
-        
-        for k in range(edges.shape[1]):
-            i = edges[0, k]
-            j = edges[1, k]
-            adjacency[i, j] = 1
-            adjacency[j, i] = 1  # undirected grid
-        print("Adjacency matrix has been generated.")
-        
         # Initial t-SNE
         if( config['show_tsne'] ):
             tsne(files, num_nodes, "t-SNE Projection (pre)")
-    
-        # Get the p and q bounds.
-        # Done separately to improve the memory efficiency on large datasets
-        print("Cacluating P and Q bounds...")
-        p_low, p_high, q_low, q_high = get_pq_bounds(files, num_nodes)
-    
-        # Go over each sample and apply the physics checks
-        print("Physics check started")
-        valid_IDs = deque()
-        for i in range(1, num_samples+1):
-            result = physics_checks(np.load(f"{config['dataset_root_healthy']}/X_{i}.npy"), 
-                                    adjacency, p_low, p_high, q_low, q_high)
+        
+        # Physics check logic
+        if( config['phys_check'] ):
+            # Generate adjecency matrix
+            adjacency = np.zeros((num_nodes, num_nodes), dtype=int)
             
-            # In case the sample is valid, save its ID
-            if(~result):
-                valid_IDs.append(i)
+            for k in range(edges.shape[1]):
+                i = edges[0, k]
+                j = edges[1, k]
+                adjacency[i, j] = 1
+                adjacency[j, i] = 1  # undirected grid
+            print("Adjacency matrix has been generated.")
+            
         
-        # Build matrix for IsolationForest only on physics-valid samples
+            # Get the p and q bounds.
+            # Done separately to improve the memory efficiency on large datasets
+            print("Cacluating P and Q bounds...")
+            p_low, p_high, q_low, q_high = get_pq_bounds(files, num_nodes)
         
-        # Convert to numpy array
-        valid_IDs = np.array(valid_IDs)
-        print(f"{len(valid_IDs)} out of {num_samples} samples have passed the physics checks")
+            # Go over each sample and apply the physics checks
+            print("Physics check started")
+            valid_IDs = deque()
+            for i in range(1, num_samples+1):
+                result = physics_checks(np.load(f"{config['dataset_root_healthy']}/X_{i}.npy"), 
+                                        adjacency, p_low, p_high, q_low, q_high)
+                # In case the sample is valid, save its ID
+                if(~result):
+                    valid_IDs.append(i)
+            
+            # Convert to numpy array
+            valid_IDs = np.array(valid_IDs)
+            print(f"{len(valid_IDs)} out of {num_samples} samples have passed the physics checks")
+        else:
+            valid_IDs = np.array([i for i in range(1, num_samples+1)])
         
         # Randomize
         rng = np.random.default_rng(0)
