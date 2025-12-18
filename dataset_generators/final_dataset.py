@@ -587,6 +587,29 @@ def generate_honest(t):
 # # # # # # # # # # # #
 # ---- Main code ---- #
 # # # # # # # # # # # #
+"""
+The data(100'000 samples) is splt into:
+    Training: 70% = 70'000
+        - 28000 healthy (40%)
+        - 10500 Ao
+        - 10500 Ar
+        - 10500 As
+        - 10500 Ad
+        
+    Validation: 15% = 15'000
+        - 7000 healthy (~47%)
+        - 2000 Ao
+        - 2000 Ar
+        - 2000 As
+        - 2000 Ad
+    
+    Test: 15% = 15'000
+        - 7000 healthy (~47%)
+        - 2000 Ao
+        - 2000 Ar
+        - 2000 As
+        - 2000 Ad
+"""
 
 if __name__ == '__main__':
     import multiprocessing as mp
@@ -600,7 +623,7 @@ if __name__ == '__main__':
       generate_honest(t)  
       
     # -- Get per-bus mean and covariance for (P,Q) --
-    # Collect healthy files (your ids 11521..23040)
+    # Collect healthy files
     Z_files = []
     for i in range(11521, 23041):
         fn = f"{dataset_config['init_dataset_path']}/Z_{i}.npy"
