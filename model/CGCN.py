@@ -76,4 +76,3 @@ class CGCN(nn.Module):
         
 
         return logits_nodes, logits_graph
-       
