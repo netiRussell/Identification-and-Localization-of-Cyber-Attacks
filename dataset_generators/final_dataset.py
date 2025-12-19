@@ -14,6 +14,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import random
 import os
 import glob
+from collections import deque
 
 # Implemented functions
 from functions import saveNetwork, load_honest, load_tobeAttacked, selectDevice
@@ -39,15 +40,19 @@ torch.set_printoptions(sci_mode=False)
 dataset_config = {
     "normal_scaling": False,
     "max_timesteps": 44634+1,
-    "number_nodes": 300,
-    "net_template": pn.case300(),
     "standardize_data": True,
+    
+    "number_nodes": 118,
+    "net_template": pn.case118(), # ! change seperately in the worker_Ao function
+    'init_dataset_path': "../init_datasetIEEE118",
+    'final_dataset_path': "../final_datasetIEEE118"
     }
 
 dataset_config["G"] = pptop.create_nxgraph(dataset_config["net_template"], respect_switches=False, include_impedances=False)
 
 # Create a uniformly shuffled list of numbers from a range 1 to max_timesteps
-timesteps_left = list(range(1, dataset_config["max_timesteps"]))
+timesteps_left = deque([i for i in range(1, dataset_config["max_timesteps"])])
+#timesteps_left = list(range(1, dataset_config["max_timesteps"]))
 random.shuffle(timesteps_left)
 
 def returnTimeStep():
@@ -55,7 +60,9 @@ def returnTimeStep():
         raise ValueError("ALL THE TIMESTEPS HAVE BEEN USED")
     
     return timesteps_left.pop()
-    
+
+def appendTimeStepToTheEnd(t_load):
+    timesteps_left.appendleft(t_load)
     
 # -- Create a mask of non-attackable buses --
 # Consider all buses
@@ -92,10 +99,10 @@ ETA = 0.001           # learning rate for optimizer
 EPOCHS = 1000         # number of attack optimization epochs
 TAU_FREQ = 1.0        # attack frequency threshold
 TAU_LOSS = 0.1        # attack quality (loss) threshold
-R_MIN = 6             # minimum attack radius for IEEE300
-R_MAX = 8             # maximum attack radius for IEEE300
+R_MIN = 3             # minimum attack radius for 2:IEEE14, 3:IEEE118, 6:IEEE300
+R_MAX = 4             # maximum attack radius for 3:IEEE14, 4:IEEE118, 8:IEEE300
 SENSOR_SIGMA = 0.01   # match the sigma used in the init_dataset
-TAU_OUTLINER = 13      # minimal loss to be considered a well generated sample
+TAU_OUTLINER = 3.7      # minimal loss to be considered a well generated sample (1, for IEEE14, 3.7 for IEEE118, 8 for IEEE300)
 device = selectDevice()
 
 
@@ -125,8 +132,11 @@ def measurement_model(x_complex, Ybus, baseMVA):
 # Build attack surface via BFS on IEEE300 graph
 def bfs_attack_surface(net, entry_bus, radius):
     
-    _, _, T_x = load_tobeAttacked(dataset_config["G"], irrelevant_buses, 1, 
-                                 entry_bus, radius, dataset_config["number_nodes"])
+    _, _, T_x = load_tobeAttacked(dataset_config["G"], irrelevant_buses, 1, entry_bus, radius,
+                                  dataset_config["number_nodes"], dataset_config["init_dataset_path"])
+    
+    if( T_x is None ):
+        return None, None
     
     # Measurement indices: assume 4 measurements per bus
     T_z = []
@@ -313,6 +323,8 @@ def step_Ao( attacker, z0, x_hat, net, t):
     p = np.random.randint(0, x_hat.shape[0])
     r = np.random.randint(R_MIN, R_MAX+1)
     T_z, T_x = bfs_attack_surface(net, p, r)
+    if( T_z is None and T_x is None):
+        return None, None, None
     
     # Attack attempt
     z, loss = attacker.attack(z0, x_hat_phasor, V, th, T_z, T_x)
@@ -352,7 +364,7 @@ def step_Ao( attacker, z0, x_hat, net, t):
 
 def worker_Ao(t_save, t_load, mu, cov_inv):
     # Generate Ybus and base unit of measurements from the current network
-    net = pn.case300()
+    net = pn.case118()
     pp.runpp(net)                              # just to build net._ppc
     
     Y_ppc = net._ppc['internal']['Ybus'].toarray()
@@ -366,8 +378,8 @@ def worker_Ao(t_save, t_load, mu, cov_inv):
     attacker = Attacker_Ao(Ybus, baseMVA, mu, cov_inv)
 
     # Input holders
-    z0 = np.load(f"../init_dataset/Z_{t_load}.npy")
-    x_hat = np.load(f"../init_dataset/X_{t_load}.npy")
+    z0 = np.load(f"{dataset_config['init_dataset_path']}/Z_{t_load}.npy")
+    x_hat = np.load(f"{dataset_config['init_dataset_path']}/X_{t_load}.npy")
     
     # Flatten z0 for future calculations
     z0 = z0.flatten()
@@ -379,14 +391,14 @@ def worker_Ao(t_save, t_load, mu, cov_inv):
     
     
     # Save current attacked sample
-    np.save(f'../final_dataset/Z_{t_save}.npy', z_att)
+    np.save(f'{dataset_config["final_dataset_path"]}/Z_{t_save}.npy', z_att)
         
-    # Estimeated X
-    np.save(f'../final_dataset/X_{t_save}.npy', x_est)
+    # Estimated X
+    np.save(f'{dataset_config["final_dataset_path"]}/X_{t_save}.npy', x_est)
     
     # Attach "attacked" graph-level flag to the target
     y = np.concatenate([y, [1]])
-    np.save(f'../final_dataset/target_{t_save}.npy', y)
+    np.save(f'{dataset_config["final_dataset_path"]}/target_{t_save}.npy', y)
     
     return t_save  # for tracking progress
 
@@ -394,24 +406,25 @@ def worker_Ao(t_save, t_load, mu, cov_inv):
 def generate_Ao(start_id, finish_id, mu, cov_inv, max_workers=2):
     
     # Un-paralleled generation for debugging
+    # [WARNING] the logic is prone to using up all of the timesteps if TAU_OUTLINER is too low
     for t_save in range(start_id, finish_id):
         print("Ao attack chosen")
         
-        tobe_appended = list()
-        status = None
+        # First attempt
+        t_load = returnTimeStep()
+        status = worker_Ao(t_save, t_load, mu, cov_inv)
+        
+        # If the 1st attempt is failed
         while( status is None ):
-            print(f"Skipped {len(tobe_appended)} sample(s) already")
+            # Push to the end to decrease chance of going over again
+            # Going over the same sample is still promising since a different set of attacked buses is utilized
+            appendTimeStepToTheEnd(t_load)
+            
+            # Next attempt
             t_load = returnTimeStep()
-            tobe_appended.append(t_load)
             status = worker_Ao(t_save, t_load, mu, cov_inv)
         
-        # Append the rejected timesteps back
-        if(len(tobe_appended) > 1):
-            tobe_appended.pop() # last timestep was utilized
-            
-            global timesteps_left
-            timesteps_left.extend(tobe_appended)
-        print(f"Current cycle: #{t_save}")
+        print(f"Current cycle: #{t_save}, Timesteps left: {len(timesteps_left)}")
     
         
     """ # TODO: fix incompatibility with the outliner gate
@@ -439,27 +452,39 @@ def generate_Ao(start_id, finish_id, mu, cov_inv, max_workers=2):
     """
 
 def generate_Ad(t_save, mu, cov_sam):
-    # Get random timestep, entry bus, and radius of the attack
-    t_load = returnTimeStep()
-    p = np.random.randint(0, dataset_config["number_nodes"])
-    r = np.random.randint(R_MIN, R_MAX+1)
-    
     # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
-                                dataset_config["number_nodes"])
-  
+    # If Z is None => no set of attacked busses passes the "len(T_x) < minimal therhsold"
+    Z = None
+    while Z is None:
+        # Get random timestep, entry bus, and radius of the attack
+        t_load = returnTimeStep()
+        p = np.random.randint(0, dataset_config["number_nodes"])
+        r = np.random.randint(R_MIN, R_MAX+1)
+        
+        # Try to get the attacked subset
+        Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
+                                dataset_config["number_nodes"], dataset_config["init_dataset_path"])
+
+    
     # - Ad data subset -
     print("Ad attack chosen")
 
     idx = np.where(mask)[0]
 
     for b in idx:
+        '''
         mu_bP, mu_bQ = mu[b, 0], mu[b, 1]
         var_bP, var_bQ = cov_sam[b, 0, 0], cov_sam[b, 1, 1]
         std_bP = np.sqrt(max(var_bP, 1e-12))
         std_bQ = np.sqrt(max(var_bQ, 1e-12))
         Z[b, 0] = np.random.normal(mu_bP, std_bP)
         Z[b, 1] = np.random.normal(mu_bQ, std_bQ)
+        '''
+        # Sample jointly with a 2-D Gaussian per attacked bus
+        x = np.random.multivariate_normal(mean=mu[b], cov=cov_sam[b], check_valid='raise')
+        
+        # Save
+        Z[b, :2] = x
 
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
@@ -468,19 +493,21 @@ def generate_Ad(t_save, mu, cov_sam):
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t_save)
+    saveNetwork(Z, target, t_save, dataset_config["final_dataset_path"])
 
 
 def generate_As(t_save):
-    # Get random timestep, entry bus, and radius of the attack
-    t_load = returnTimeStep()
-    p = np.random.randint(0, dataset_config["number_nodes"])
-    r = np.random.randint(R_MIN, R_MAX+1)
-    
     # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
-                                dataset_config["number_nodes"])
-  
+    # If Z is None => no set of attacked busses passes the "len(T_x) < minimal therhsold"
+    Z = None
+    while Z is None:
+        # Get random timestep, entry bus, and radius of the attack
+        t_load = returnTimeStep()
+        p = np.random.randint(0, dataset_config["number_nodes"])
+        r = np.random.randint(R_MIN, R_MAX+1)
+        Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
+                                dataset_config["number_nodes"], dataset_config["init_dataset_path"])
+    print(Z.shape, mask.shape)
     # - As data subset -
     print("As attack chosen")
       
@@ -495,21 +522,31 @@ def generate_As(t_save):
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t_save)
+    saveNetwork(Z, target, t_save, dataset_config["final_dataset_path"])
 
 
-def generate_Ar(tau, t_save, t_load):
-    # Get random entry bus, and radius of the attack
-    p = np.random.randint(0, dataset_config["number_nodes"])
-    r = np.random.randint(R_MIN, R_MAX+1)
+def generate_Ar(tau, t_save):
+    Z = None
+    while Z is None:
+        # Get random timestep, entry bus, and radius of the attack
+        t_load = returnTimeStep()
+        p = np.random.randint(0, dataset_config["number_nodes"])
+        r = np.random.randint(R_MIN, R_MAX+1)
     
-    # Load a node features and a mask with the buses to be attacked marked as True
-    Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
-                                dataset_config["number_nodes"])
+        # Invalid t_load (doesn't have anything this far in the past)
+        if(t_load - tau < 1):
+            appendTimeStepToTheEnd(t_load)
+            continue
+        
+        # Load a node features and a mask with the buses to be attacked marked as True
+        Z, mask, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load, p, r, 
+                                    dataset_config["number_nodes"], dataset_config["init_dataset_path"])
+        
+
+        # Load data TAU steps before
+        Z_tau, _, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, t_load-tau, p, r, 
+                                    dataset_config["number_nodes"], dataset_config["init_dataset_path"])
     
-    # Load data TAU steps before
-    Z_tau, _, _ = load_tobeAttacked(dataset_config["G"], irrelevant_buses, 
-                                t_load-tau, p, r, dataset_config["number_nodes"])
   
     # - Ar data subset -
     print("Ar attack chosen")
@@ -525,7 +562,7 @@ def generate_Ar(tau, t_save, t_load):
     target = np.concatenate([mask.astype(int), [1]])
   
     # Save the modified files
-    saveNetwork(Z, target, t_save)
+    saveNetwork(Z, target, t_save, dataset_config["final_dataset_path"])
 
 
 def generate_honest(t):
@@ -533,7 +570,7 @@ def generate_honest(t):
     t_load = returnTimeStep()
     
     # Load a node features and a mask filled with False values
-    Z, mask = load_honest(t_load, dataset_config["number_nodes"])
+    Z, mask = load_honest(t_load, dataset_config["number_nodes"], dataset_config["init_dataset_path"])
     
     # Exclude Voltage magnitude and angle
     Z = Z[:, :2]
@@ -542,7 +579,7 @@ def generate_honest(t):
     target = np.concatenate([mask.astype(int), [0]])
   
     # Save the modified files
-    saveNetwork(Z, target, t)
+    saveNetwork(Z, target, t, dataset_config["final_dataset_path"])
 
 
 
@@ -553,6 +590,7 @@ def generate_honest(t):
 
 if __name__ == '__main__':
     import multiprocessing as mp
+    
     mp.set_start_method('spawn', force=True)
     
     # ! ---- Training set ---- !
@@ -562,10 +600,10 @@ if __name__ == '__main__':
       generate_honest(t)  
       
     # -- Get per-bus mean and covariance for (P,Q) --
-    # Collect healthy files (your ids 11521..23040)
+    # Collect healthy files
     Z_files = []
     for i in range(11521, 23041):
-        fn = f"../init_dataset/Z_{i}.npy"
+        fn = f"{dataset_config['init_dataset_path']}/Z_{i}.npy"
         if not os.path.exists(fn):
             raise RuntimeError(f"{fn} missing")
         Z_files.append(fn)
@@ -609,12 +647,11 @@ if __name__ == '__main__':
     
     # -- Generate Ao (Test)--
     generate_Ao(28801, 29521, mu, cov_inv)
-    
+
     # -- Generate Ad --
     for t in range(5761, 11521):
       print(f"\n: Current cycle: #{t}")
       generate_Ad(t, mu, cov_sam)
-
     
     # ! ---- Validation set ---- !
     
@@ -634,33 +671,19 @@ if __name__ == '__main__':
     for t in range(29521, 30241):
       print(f"\n: Current cycle: #{t}")
       generate_Ad(t, mu, cov_sam)
-    
+
     # -- Generate As -- 
     for t in range(30241, 30961):
       print(f"\nCurrent cycle: #{t}")
       generate_As(t)
     
     # -- Generate Ar --
-    prepared_Ar = list()
-    tobe_Returned = list()
     tau = 4
     
-    # Gather IDs to be used
-    while(len(prepared_Ar) != 720):
-        t_load = returnTimeStep()
-        if(t_load-tau < 1 ):
-            tobe_Returned.append(t_load)
-        else:
-            prepared_Ar.append(t_load)
-    
-    # Push bask unused IDs
-    while(len(tobe_Returned) != 0):
-        timesteps_left.append(tobe_Returned.pop())
-        
     # Generate the samples
     for t in range(30961, 31681):
       print(f"\nCurrent cycle: #{t}")
-      generate_Ar(tau, t, prepared_Ar.pop())
+      generate_Ar(tau, t)
     
     # -- Generate honest samples (not-attacked) --
     for t in range(31681, 34561):
@@ -670,7 +693,7 @@ if __name__ == '__main__':
     if( dataset_config["standardize_data"] ):
         # ! ---- Standardization ---- !
         # Load in the training dataset
-        root = "../final_dataset"
+        root = f"{dataset_config['final_dataset_path']}"
         Z_list = []
         
         # Healthy samples only

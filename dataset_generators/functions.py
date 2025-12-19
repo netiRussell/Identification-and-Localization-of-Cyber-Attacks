@@ -11,13 +11,20 @@ import pandapower.topology as pptop
 import networkx as nx
 from torch.nn.utils import clip_grad_norm_
 
-
-from model.ARMA import GNNArma
-from model.ARMA_Transformer import GNNArmaTransformer
-from model.CGCN import CGCN
-from model.CNN import CNN
-from model.MLP import MLP
-from model.LSTM import LSTM
+try:
+    from model.ARMA import GNNArma
+    from model.ARMA_Transformer import GNNArmaTransformer
+    from model.CGCN import CGCN
+    from model.CNN import CNN
+    from model.MLP import MLP
+    from model.LSTM import LSTM
+except ImportError:
+    GNNArma = None
+    GNNArmaTransformer = None
+    CGCN = None
+    CNN = None
+    MLP = None
+    LSTM = None
 
 
 # TODO: To be deleted
@@ -30,7 +37,7 @@ torch.cuda.manual_seed(123)
 np.random.seed(123)
 
 
-def saveNetwork( X, target, i):
+def saveNetwork( X, target, i, location):
   """
   Saves the network into a Ad(or As)_dataset folder
 
@@ -45,16 +52,19 @@ def saveNetwork( X, target, i):
   i : Integer
     Current iteration (i from 0 to 36000)
 
+  location : String
+    Path to where the target and X will be saved
+
     
   Returns:
   -------
     None
   """
-  np.save(f"../final_dataset/X_{i}", X)
-  np.save(f"../final_dataset/target_{i}", target)
+  np.save(f"{location}/X_{i}", X)
+  np.save(f"{location}/target_{i}", target)
 
 
-def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nodes=300):
+def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nodes, init_dataset_path):
     """
     Returns node features of timestep t_load and a mask 
     filled with False values of size number_nodes
@@ -75,6 +85,12 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
  
     radius : Integer
         The maximum number of hops from the entry bus to include in the BFS region.
+    
+    number_nodes : Integer
+        The number of nodes in the network
+        
+    init_dataset_path : String
+        The path to the directory where initial samples are located
 
     Returns:
     -------
@@ -88,9 +104,17 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
         List of nodes to be attacked
     """
     T_x = list()
+    patience_counter = 0
     
-    # Make sure the number of attacked buses are always >= 5
-    while(len(T_x) < 5):
+    # Make sure the number of attacked buses are always >= 2 (2 for IEEE14, 3 for IEEE118, 5 for IEEE300)
+    while(len(T_x) < 3):
+        # If you can't find a suitable set of buses to be attacked
+        if patience_counter > 10:
+            print("Couldn't find a suitable set of attacked buses. Error origin: load_tobeAttacked()")
+            return None, None, None
+        
+        patience_counter += 1
+        
         lengths = nx.single_source_shortest_path_length(G, entry_bus, cutoff=radius)
         attacked_buses = list(lengths.keys())
     
@@ -104,11 +128,11 @@ def load_tobeAttacked(G, irrelevant_buses, t_load, entry_bus, radius, number_nod
     mask[T_x] = True
     
     # Z = Node features array
-    Z = np.load(f"../init_dataset/Z_{t_load}.npy")
+    Z = np.load(f"{init_dataset_path}/Z_{t_load}.npy")
     
     return Z, mask, T_x
 
-def load_honest( t_load, number_nodes=300 ):
+def load_honest( t_load, number_nodes, init_dataset_path ):
   """
   Returns node features of timestep t_load and a mask 
   filled with False values of size number_nodes
@@ -120,7 +144,9 @@ def load_honest( t_load, number_nodes=300 ):
     
   number_nodes: Integer
       Number of nodes present in the current network
-      
+
+  init_dataset_path : String
+      The path to the directory where initial samples are located
 
   Returns:
   -------
@@ -131,7 +157,7 @@ def load_honest( t_load, number_nodes=300 ):
     Boolean mask used to selectively modify only the rows of data corresponding to True values in it
   """
   # Z = Node features array
-  Z = np.load(f"../init_dataset/Z_{t_load}.npy")
+  Z = np.load(f"{init_dataset_path}/Z_{t_load}.npy")
 
   # Declare and Define mask with no True values(nothing to attack)
   mask = np.full(number_nodes, False, dtype="bool")
@@ -201,6 +227,8 @@ def visualizeLossValid(fa, dr, f1, acc):
     """
     # Create a figure with two subplots side by side
     fig, ((g1, g2), (g3, g4)) = plt.subplots(2, 2)
+    
+    print(fa)
     
     # First plot
     g1.plot(range(1,len(fa)+1), fa, label='FA')
@@ -428,8 +456,6 @@ def define_modelTransformer(hyperparams, config):
             leakyRelu_rate=config["transformer_specific"]["leakyRelu_rate"]
         )
     else:
-        # Required hyperparams content: dropout, num_ARMA_layers, hidden_channels, d_model_channels, 
-        #                               num_stacks, num_layers, transformer_layers
         model = GNNArmaTransformer(
             in_channels=config["in_channels"],
             num_ARMA_layers=hyperparams["num_ARMA_layers"],
@@ -555,13 +581,12 @@ def train_epoch(model, optimizer, epoch, train_loader, criterion,
                 scaler.unscale_(optimizer)  # <-- needed before clipping
             
             # Check one what is the current grad (Commented out for performance)
+            # Clip spikes in grad
+            clip_grad_norm_(model.parameters(), max_norm=10.0)  
             '''
             total_norm = clip_grad_norm_(model.parameters(), max_norm=10.0)
             print(f"Grad norm before clipping: {total_norm:.4f}")
             '''
-            
-            # Clip spikes in grad
-            clip_grad_norm_(model.parameters(), max_norm=10.0)    
             
             # Print current epoch, batch, loss (Commented out for performance)
             '''
@@ -577,10 +602,76 @@ def train_epoch(model, optimizer, epoch, train_loader, criterion,
     # avg per minibatch
     return (total_loss / len(train_loader)).item()
 
+
+def train_epoch_old(model, optimizer, epoch, train_loader, criterion, 
+                scheduler, config, device, autocast, use_amp, scaler):
+    # TO BE DELETED
+    gradSpike = False
+    
+    # Turn on the training mode to include features like GraphNorm normalization
+    model.train()
+    
+    # Declare default value for loss and # of batches(steps) for grad accumulation
+    total_loss = torch.zeros(()).to(device)
+    accum_steps = 64 # 64 mini batches filled with 4 samples = 256 samples per optimizer.step()
+    
+    # Reset accumulated grads
+    optimizer.zero_grad()
+    
+    for minibatch_id, minibatch in enumerate(train_loader):
+        minibatch = minibatch.to(device)
+        
+        with autocast(device_type=device.type if device.type!='cpu' else 'cuda',
+                      enabled=use_amp):
+            # Get targets for the batch
+            target_nodes = minibatch.y
+            target_graph = minibatch.y_graph
+            
+            # Get model's raw output (logits)
+            logits_nodes, logits_graph = model(minibatch.x, 
+                           minibatch.edge_index, 
+                           weights=minibatch.edge_attr,
+                           batch=minibatch.batch)
+            
+            # Compute loss and save it
+            loss = criterion(logits_nodes.view(-1), target_nodes)
+            loss += (criterion(logits_graph, target_graph.squeeze(0)))
+            total_loss += (loss.item()/accum_steps)
+
+        # Scale down the loss so that the grads are averaged over accum_steps
+        scaler.scale(loss / accum_steps).backward()
+        
+        # Gradient Accumulation to simulate 2^8 samples per batch while maintaining low RAM usage
+        if (minibatch_id+1) % accum_steps == 0:
+            # Clip gradients so their total L2 norm ≤ 1
+            clip_grad_norm_(model.parameters(), max_norm=10.0)
+            
+            # Applying grads
+            # print(f"Epoch#{epoch}, Batch#{(minibatch_id // accum_steps):04d} | Current loss: {loss:.4f}\n")
+            scaler.step(optimizer)
+            scheduler.step()
+            scaler.update()
+            optimizer.zero_grad()
+    
+    # Extra gradient step to make sure there are no leftovers
+    if (minibatch_id + 1) % accum_steps != 0:
+        # Clip gradients so their total L2 norm ≤ 1
+        clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
+        # Applying grads
+        # print(f"Epoch#{epoch}, Last batch\n")
+        scaler.step(optimizer)
+        scaler.update()
+        scheduler.step()
+        optimizer.zero_grad()
+        
+    return (total_loss / len(train_loader)).item()
+
+
 def validate(model, valid_loader, criterion, config, device):
     model.eval()
 
-    eps = 1e-12
+    eps = 1e-12 # needed for efficient prevention of the division by zero
     n_batches = len(valid_loader)
     num_nodes = config["num_nodes"]
 
@@ -662,17 +753,13 @@ def validate(model, valid_loader, criterion, config, device):
     F1_5_NW  = (never_attacked & (FP_b > 0)).sum()
 
     attacked = ~never_attacked
-    F1_95_NW_tmp = torch.zeros((), device=device, dtype=torch.long)
-    F1_5_NW_tmp  = torch.zeros((), device=device, dtype=torch.long)
     if attacked.any():
         p_b = TP_b[attacked].float() / (TP_b[attacked] + FP_b[attacked] + eps)
         r_b = TP_b[attacked].float() / (TP_b[attacked] + FN_b[attacked] + eps)
         f1_b = 2 * p_b * r_b / (p_b + r_b + eps)
-        F1_95_NW_tmp = (f1_b >= 0.95).long().sum()
-        F1_5_NW_tmp  = (f1_b <= 0.05).long().sum()
 
-    F1_95_NW += F1_95_NW_tmp
-    F1_5_NW  += F1_5_NW_tmp
+    F1_95_NW += (f1_b >= 0.95).long().sum()
+    F1_5_NW  += (f1_b <= 0.05).long().sum()
 
     # Graph detection metrics
     det_FA     = gFP.float() / (gFP + gTN + eps)
